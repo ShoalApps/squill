@@ -75,7 +75,7 @@ class Vault(val root: File) {
 
     /** Every note's file details, without reading them, for spotting what's changed. */
     fun stats(): List<FileStat> = root.walkTopDown().onEnter { !it.name.startsWith(".") || it == root }
-        .filter { it.isFile && (it.extension.equals("md", ignoreCase = true) || it.extension.equals("svg", ignoreCase = true)) }
+        .filter { it.isFile && it.extension.lowercase() in KINDS }
         .map { FileStat(relative(it), it.lastModified(), it.length()) }.toList()
 
     fun exists(path: String) = at(path).exists()
@@ -90,6 +90,26 @@ class Vault(val root: File) {
     }
 
     fun saveSketch(path: String, sketch: Sketch) = writeAtomically(at(path), sketch.toSvg())
+
+    fun createDeck(folder: String, name: String, deck: Deck = Deck()): String {
+        at(folder).mkdirs()
+        val file = free(folder, cleanName(name), "deck")
+        writeAtomically(file, deck.toJson())
+        return relative(file)
+    }
+
+    fun saveDeck(path: String, deck: Deck) = writeAtomically(at(path), deck.toJson())
+
+    fun moveDeck(path: String, folder: String, name: String): String {
+        val from = at(path)
+        val clean = cleanName(name.removeSuffix(".deck"))
+        at(folder).mkdirs()
+        val newPath = listOf(folder, "$clean.deck").filter { it.isNotEmpty() }.joinToString("/")
+        if (newPath == path) return path
+        val to = if (newPath.equals(path, ignoreCase = true)) at(newPath) else free(folder, clean, "deck")
+        if (!from.renameTo(to)) throw VaultException("Couldn't move that presentation")
+        return relative(to)
+    }
 
     /** Renames or moves a drawing and updates the notes that show it. */
     fun moveSketch(path: String, folder: String, name: String): String {
@@ -236,9 +256,9 @@ class Vault(val root: File) {
 
     /** What's in the trash, by the path it would go back to. */
     fun trashed(): List<Note> = if (!trash.exists()) emptyList() else trash.walkTopDown()
-        .filter { it.isFile && (it.extension.equals("md", ignoreCase = true) || it.extension.equals("svg", ignoreCase = true)) && !it.name.startsWith(".") }
+        .filter { it.isFile && it.extension.lowercase() in KINDS && !it.name.startsWith(".") }
         .map { file ->
-            val (body, pinned, colour) = if (file.extension.equals("svg", ignoreCase = true)) Triple("", false, null) else NoteFile.read(file.readText())
+            val (body, pinned, colour) = if (!file.extension.equals("md", ignoreCase = true)) Triple("", false, null) else NoteFile.read(file.readText())
             Note(file.relativeTo(trash).invariantSeparatorsPath, body, file.lastModified(), pinned, colour)
         }.sortedByDescending { it.modified }.toList()
 
@@ -293,18 +313,21 @@ class Vault(val root: File) {
         val parts = path.replace('\\', '/').split('/').filter { it.isNotEmpty() && it != "." }
         if (parts.isEmpty() || parts.any { it == ".." || it.startsWith(".") }) return 0
         val file = parts.last()
-        val isNote = file.endsWith(".md", ignoreCase = true)
-        if (!isNote && !file.endsWith(".svg", ignoreCase = true)) return 0
+        val extension = file.substringAfterLast('.', "").lowercase()
+        if (extension !in KINDS) return 0
         val text = input.readBytes().toString(Charsets.UTF_8)
-        if (!isNote && Sketch.parse(text) == null) return 0 // Only Squill's own drawings.
+        // Only Squill's own drawings and presentations, not just any file with that ending.
+        if (extension == "svg" && Sketch.parse(text) == null) return 0
+        if (extension == "deck" && Deck.parse(text) == null) return 0
         val folder = parts.dropLast(1).joinToString("/") { cleanName(it) }
         at(folder).mkdirs()
-        val target = free(folder, cleanName(file.dropLast(if (isNote) 3 else 4)), if (isNote) "md" else "svg")
+        val target = free(folder, cleanName(file.dropLast(extension.length + 1)), extension)
         writeAtomically(target, text)
         return 1
     }
 
     companion object {
         const val TRASH = ".trash"
+        val KINDS = setOf("md", "svg", "deck")
     }
 }

@@ -93,12 +93,20 @@ fun NotesScreen(
     var searching by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var menu by remember { mutableStateOf(false) }
+    var newMenu by remember { mutableStateOf(false) }
     var ask by remember { mutableStateOf<Ask?>(null) }
     var cardMenu by remember { mutableStateOf<String?>(null) }
     var folderMenu by remember { mutableStateOf<String?>(null) }
     val snackbars = remember { SnackbarHostState() }
     LaunchedEffect(problem) {
         problem?.let { snackbars.showSnackbar(it); vm.clearProblem() }
+    }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val importOffice = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.importOffice(context, uri, folder) { result ->
+            result.onSuccess { onOpen(it) }
+            result.onFailure { android.widget.Toast.makeText(context, it.message ?: "That file couldn't be opened", android.widget.Toast.LENGTH_LONG).show() }
+        }
     }
     if (searching) BackHandler { searching = false; query = "" }
     else if (tag != null) BackHandler { onTag(null) }
@@ -118,6 +126,13 @@ fun NotesScreen(
             query.isNotBlank() -> s.title.contains(query, ignoreCase = true)
             tag != null -> false
             else -> s.folder == folder
+        }
+    }.sortedByDescending { it.modified }
+    val presentations = library.decks.filter { d ->
+        when {
+            query.isNotBlank() -> d.title.contains(query, ignoreCase = true)
+            tag != null -> false
+            else -> d.folder == folder
         }
     }.sortedByDescending { it.modified }
     val pinned = shown.filter { it.note.pinned }
@@ -150,6 +165,7 @@ fun NotesScreen(
                         Box {
                             IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, contentDescription = "More") }
                             DropdownMenu(menu, { menu = false }) {
+                                DropdownMenuItem({ Text("Open a Word or PowerPoint file") }, onClick = { menu = false; runCatching { importOffice.launch(arrayOf("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/octet-stream")) } })
                                 DropdownMenuItem({ Text("New folder") }, onClick = { menu = false; ask = Ask.NewFolder }, leadingIcon = { Icon(painterResource(R.drawable.ic_folder), null) })
                                 val trashed = library.trash.size
                                 DropdownMenuItem({ Text(if (trashed == 0) "Trash" else "Trash ($trashed)") }, onClick = { menu = false; onTrash() })
@@ -162,11 +178,13 @@ fun NotesScreen(
         },
         floatingActionButton = {
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                SmallFloatingActionButton(onClick = { vm.createSketch(folder, "Drawing") { onOpen(it) } }) {
-                    Icon(painterResource(R.drawable.ic_brush), contentDescription = "New drawing")
-                }
-                SmallFloatingActionButton(onClick = { vm.create(folder, "Checklist", "- [ ] ") { onOpen(it.path) } }) {
-                    Icon(painterResource(R.drawable.ic_checklist), contentDescription = "New checklist")
+                Box {
+                    SmallFloatingActionButton(onClick = { newMenu = true }) { Icon(Icons.Default.Add, contentDescription = "New checklist, drawing or presentation") }
+                    DropdownMenu(newMenu, { newMenu = false }) {
+                        DropdownMenuItem({ Text("New checklist") }, onClick = { newMenu = false; vm.create(folder, "Checklist", "- [ ] ") { onOpen(it.path) } }, leadingIcon = { Icon(painterResource(R.drawable.ic_checklist), null) })
+                        DropdownMenuItem({ Text("New drawing") }, onClick = { newMenu = false; vm.createSketch(folder, "Drawing") { onOpen(it) } }, leadingIcon = { Icon(painterResource(R.drawable.ic_brush), null) })
+                        DropdownMenuItem({ Text("New presentation") }, onClick = { newMenu = false; vm.createDeck(folder, "Presentation") { onOpen(it) } }, leadingIcon = { Icon(painterResource(R.drawable.ic_slides), null) })
+                    }
                 }
                 ExtendedFloatingActionButton(
                     onClick = { vm.create(folder, "Untitled") { onOpen(it.path) } },
@@ -236,7 +254,26 @@ fun NotesScreen(
                     }
                 }
             }
-            if (shown.isEmpty() && subfolders.isEmpty() && drawings.isEmpty()) item(span = StaggeredGridItemSpan.FullLine, key = "empty") {
+            if (presentations.isNotEmpty()) {
+                item(span = StaggeredGridItemSpan.FullLine, key = "presentations") { Label("Presentations") }
+                items(presentations, key = { it.path }) { d ->
+                    Box {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                            border = if (d.path == openPath) androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
+                            modifier = Modifier.fillMaxWidth().combinedClickable(onClick = { onOpen(d.path) }, onLongClick = { cardMenu = d.path }),
+                        ) {
+                            SlideView(d.deck.slides.first(), Modifier.fillMaxWidth())
+                            Text(d.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 10.dp))
+                            Text(if (d.deck.slides.size == 1) "1 slide" else "${d.deck.slides.size} slides", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 10.dp, bottom = 10.dp))
+                        }
+                        DropdownMenu(cardMenu == d.path, { cardMenu = null }) {
+                            DropdownMenuItem({ Text("Delete") }, onClick = { cardMenu = null; onBeforeChange(d.path); vm.trash(d.path) })
+                        }
+                    }
+                }
+            }
+            if (shown.isEmpty() && subfolders.isEmpty() && drawings.isEmpty() && presentations.isEmpty()) item(span = StaggeredGridItemSpan.FullLine, key = "empty") {
                 Column(Modifier.fillMaxWidth().padding(vertical = 64.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(painterResource(R.drawable.ic_launcher_mono), null, Modifier.size(120.dp), tint = MaterialTheme.colorScheme.primary)
                     Text(if (filtering) "Nothing found" else "Nothing inked here yet", style = MaterialTheme.typography.titleLarge)

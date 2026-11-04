@@ -22,6 +22,13 @@ Notes, links and reminders, as ordinary files on your phone. A Material You note
 - Lines, arrows, boxes, circles and text. Select, move, duplicate and delete. Undo and redo. Plain, lined, grid and dotted paper
 - Drawings are ordinary SVG pictures you can open anywhere, can sit inside a note, and save as PNG
 
+## Documents and slides
+
+- Save any note as Word (.docx) or PDF, and open Word files as notes
+- Presentations you can really edit on a phone: drag, resize and restyle text, boxes, circles, lines and pictures, with speaker notes
+- Reveal things click by click when presenting, with undo and redo throughout
+- Open and save PowerPoint (.pptx). What's on the slide travels; reveal steps stay in Squill, and imported animations and master slides don't come across
+
 ## Reminders
 
 - One-off, daily, weekday, weekly, monthly and yearly reminders that ring at the exact minute, even in Doze

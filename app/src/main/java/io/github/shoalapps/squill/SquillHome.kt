@@ -35,6 +35,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
+import io.github.shoalapps.squill.notes.DeckScreen
 import io.github.shoalapps.squill.notes.DrawingScreen
 import io.github.shoalapps.squill.notes.GraphScreen
 import io.github.shoalapps.squill.notes.NoteEditor
@@ -134,7 +135,11 @@ fun SquillHome(reminders: RemindersViewModel, notes: NotesViewModel) {
                         val editor: @Composable (Modifier, String) -> Unit = { m, path ->
                             androidx.compose.foundation.layout.Box(m) {
                                 androidx.compose.runtime.key(path) {
-                                    if (path.endsWith(".svg")) DrawingScreen(
+                                    if (path.endsWith(".deck")) DeckScreen(
+                                        path, library, notes,
+                                        onClose = { openPath = null },
+                                        onPathChanged = { openPath = it },
+                                    ) else if (path.endsWith(".svg")) DrawingScreen(
                                         path, library, notes,
                                         onClose = { openPath = null },
                                         onPathChanged = { openPath = it },

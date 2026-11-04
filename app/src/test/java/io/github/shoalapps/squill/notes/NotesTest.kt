@@ -11,6 +11,7 @@ import org.junit.rules.TemporaryFolder
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.util.Base64
 
 class MarkdownTest {
     @Test fun blocksAreRecognised() {
@@ -432,5 +433,136 @@ class ScaleTest {
         assertTrue("checking files took ${stats}ms", stats < 3000)
         assertTrue("backlinks took ${lookups}ms", lookups < 2000)
         assertTrue("a graph step took ${step}ms", step < 3000)
+    }
+}
+
+class OfficeTest {
+    private val samples = File("build/office-samples").apply { mkdirs() }
+    private val markdown = """# Title & more
+
+Some **bold**, *italic*, ~~gone~~ and `code` with a [link](https://example.com/a?b=1&c=2).
+
+## Second
+
+- one
+- two <tag>
+  - nested
+
+1. first
+2. second
+
+> A quote
+
+| Name | Size |
+|---|---|
+| Boat | 3 |
+| Sail | 4 |
+
+Ending paragraph.
+"""
+
+    private fun roundTrip(md: String): String {
+        val bytes = ByteArrayOutputStream().also { Docx.export(md, it) }.toByteArray()
+        return Docx.import(ByteArrayInputStream(bytes))
+    }
+
+    @Test fun wordFilesKeepTheirStructure() {
+        File(samples, "sample.docx").outputStream().use { Docx.export(markdown, it) }
+        val back = roundTrip(markdown)
+        assertTrue(back, "# Title & more" in back)
+        assertTrue(back, "**bold**" in back)
+        assertTrue(back, "*italic*" in back)
+        assertTrue(back, "~~gone~~" in back)
+        assertTrue(back, "`code`" in back)
+        assertTrue(back, "[link](https://example.com/a?b=1&c=2)" in back)
+        assertTrue(back, "## Second" in back)
+        assertTrue(back, "- one" in back)
+        assertTrue(back, "  - nested" in back)
+        assertTrue(back, "1. first" in back)
+        assertTrue(back, "2. second" in back)
+        assertTrue(back, "> A quote" in back)
+        assertTrue(back, "| Boat | 3 |" in back)
+        assertTrue(back, "Ending paragraph." in back)
+    }
+
+    @Test fun markdownCharactersInWordTextStayLiteral() {
+        val md = roundTrip("Price is 2 \\* 3 and snake\\_case")
+        assertEquals("Price is 2 * 3 and snake_case", Markdown.inlines(md.trim()).joinToString("") { it.text })
+    }
+
+    @Test fun hostileAndWrongFilesAreRefusedPolitely() {
+        val notZip = ByteArrayInputStream("not a zip".toByteArray())
+        assertTrue(runCatching { Docx.import(notZip) }.exceptionOrNull() is OfficeException)
+        val wrong = ByteArrayOutputStream().also { writeZip(it, mapOf("a.txt" to "x".toByteArray())) }.toByteArray()
+        assertTrue(runCatching { Docx.import(ByteArrayInputStream(wrong)) }.exceptionOrNull() is OfficeException)
+        assertTrue(runCatching { Pptx.import(ByteArrayInputStream(wrong)) }.exceptionOrNull() is OfficeException)
+        val bomb = ByteArrayOutputStream().also { writeZip(it, mapOf("big" to ByteArray(4 * 1024 * 1024))) }.toByteArray()
+        assertTrue(runCatching { readZip(ByteArrayInputStream(bomb), limit = 1024) }.exceptionOrNull() is OfficeException)
+    }
+
+    private val png = Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAEBgIApD5fRAAAAABJRU5ErkJggg==")
+    private val deck = Deck(
+        listOf(
+            Deck.titleSlide(1),
+            Slide(
+                2, background = 0xEEEEFF,
+                elements = listOf(
+                    Element(21, "text", 100f, 50f, 800f, 100f, "Heading <one> & two\nSecond line", size = 40f, bold = true, italic = true, align = "center", colour = 0xC62828),
+                    Element(22, "rect", 100f, 200f, 300f, 200f, "In a box", size = 24f, fill = 0xE0A800, colour = 0x1B1B1F),
+                    Element(23, "ellipse", 500f, 200f, 200f, 200f, fill = 0x0B7A75),
+                    Element(24, "line", 100f, 500f, 800f, 0f, colour = 0x4A4FA3, size = 8f),
+                    Element(25, "image", 900f, 400f, 200f, 200f, image = Base64.getEncoder().encodeToString(png)),
+                ),
+            ),
+        ),
+    )
+
+    @Test fun powerPointFilesKeepWhatsOnTheSlide() {
+        File(samples, "sample.pptx").outputStream().use { Pptx.export(deck, it) }
+        val bytes = ByteArrayOutputStream().also { Pptx.export(deck, it) }.toByteArray()
+        val back = Pptx.import(ByteArrayInputStream(bytes))
+        assertEquals(2, back.slides.size)
+        val s = back.slides[1]
+        assertEquals(0xEEEEFF, s.background)
+        assertEquals(listOf("text", "rect", "ellipse", "line", "image"), s.elements.map { it.kind })
+        val heading = s.elements[0]
+        assertEquals("Heading <one> & two\nSecond line", heading.text)
+        assertTrue(heading.bold && heading.italic)
+        assertEquals("center", heading.align)
+        assertEquals(0xC62828, heading.colour)
+        assertEquals(40f, heading.size, .5f)
+        assertEquals(100f, heading.x, .5f)
+        assertEquals(800f, heading.w, .5f)
+        assertEquals(0xE0A800, s.elements[1].fill)
+        assertEquals(0x0B7A75, s.elements[2].fill)
+        assertTrue(png.contentEquals(Base64.getDecoder().decode(s.elements[4].image)))
+    }
+
+    /** Files made by other software, when they've been generated: they use templates and placeholders Squill's own don't. */
+    @Test fun filesFromOtherSoftwareOpen() {
+        File(samples, "real.docx").takeIf { it.exists() }?.let { f ->
+            val md = f.inputStream().use { Docx.import(it) }
+            println("real.docx:\n$md")
+            assertTrue(md, "# Real title" in md)
+            assertTrue(md, "**bold**" in md && "*italic*" in md)
+            assertTrue(md, "- Bullet one" in md)
+            assertTrue(md, "1. Number one" in md && "2. Number two" in md)
+            assertTrue(md, "| a | b |" in md)
+        }
+        File(samples, "real.pptx").takeIf { it.exists() }?.let { f ->
+            val d = f.inputStream().use { Pptx.import(it) }
+            assertEquals(3, d.slides.size)
+            assertEquals("Placeholder title", d.slides[0].elements[0].text)
+            assertTrue(d.slides[1].elements.any { it.text == "Point one\nPoint two" })
+            assertTrue(d.slides[2].elements.any { it.text == "Shape text" })
+        }
+    }
+
+    @Test fun decksRoundTripAsJson() {
+        val withSteps = deck.copy(slides = deck.slides.map { it.copy(elements = it.elements.map { e -> e.copy(step = 1) }, notes = "Say this") })
+        assertEquals(withSteps, Deck.parse(withSteps.toJson()))
+        assertEquals(1, withSteps.slides[0].steps)
+        assertNull(Deck.parse("not json"))
+        assertNull(Deck.parse("""{"slides":[]}"""))
     }
 }

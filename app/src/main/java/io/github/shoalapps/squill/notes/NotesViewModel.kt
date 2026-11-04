@@ -24,11 +24,18 @@ data class SketchInfo(val path: String, val modified: Long, val size: Long, val 
     val folder: String get() = path.substringBeforeLast('/', "")
 }
 
+/** A presentation, and when its file last changed. */
+data class DeckInfo(val path: String, val modified: Long, val size: Long, val deck: Deck) {
+    val title: String get() = path.substringAfterLast('/').removeSuffix(".deck")
+    val folder: String get() = path.substringBeforeLast('/', "")
+}
+
 data class Library(
     val notes: List<NoteInfo> = emptyList(),
     val folders: List<String> = emptyList(),
     val trash: List<Note> = emptyList(),
     val sketches: List<SketchInfo> = emptyList(),
+    val decks: List<DeckInfo> = emptyList(),
 ) {
     val paths: List<String> get() = notes.map { it.note.path }
     val tags: List<String> by lazy { notes.flatMap { it.tags }.distinct().sortedBy { it.lowercase() } }
@@ -85,6 +92,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     private val indexSerializer = kotlinx.serialization.builtins.ListSerializer(NoteInfo.serializer())
     private var known = HashMap<String, NoteInfo>()
     private var knownSketches = HashMap<String, SketchInfo>()
+    private var knownDecks = HashMap<String, DeckInfo>()
     private var indexWrite: kotlinx.coroutines.Job? = null
 
     init {
@@ -116,7 +124,14 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         val seen = HashMap<String, NoteInfo>(stats.size * 2)
         val seenSketches = HashMap<String, SketchInfo>()
         var changed = false
+        val seenDecks = HashMap<String, DeckInfo>()
         stats.forEach { stat ->
+            if (stat.path.endsWith(".deck", ignoreCase = true)) {
+                val old = knownDecks[stat.path]
+                if (old != null && old.modified == stat.modified && old.size == stat.size) seenDecks[stat.path] = old
+                else Deck.parse(vault.readText(stat.path))?.let { seenDecks[stat.path] = DeckInfo(stat.path, stat.modified, stat.size, it) }
+                return@forEach
+            }
             if (stat.path.endsWith(".svg", ignoreCase = true)) {
                 val old = knownSketches[stat.path]
                 if (old != null && old.modified == stat.modified && old.size == stat.size) seenSketches[stat.path] = old
@@ -137,7 +152,8 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         if (seen.size != known.size) changed = true
         known = seen
         knownSketches = seenSketches
-        _library.value = Library(seen.values.toList(), vault.folders(), vault.trashed(), seenSketches.values.toList())
+        knownDecks = seenDecks
+        _library.value = Library(seen.values.toList(), vault.folders(), vault.trashed(), seenSketches.values.toList(), seenDecks.values.toList())
         if (changed) writeIndexSoon()
     }
 
@@ -210,6 +226,16 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun createDeck(folder: String, name: String, deck: Deck = Deck(), onDone: (String) -> Unit) = act(onDone) { vault.createDeck(folder, name, deck) }
+    fun saveDeck(path: String, deck: Deck) = act<Unit> { if (vault.exists(path)) vault.saveDeck(path, deck) }
+    fun saveDeckNow(path: String, deck: Deck) {
+        runBlocking(queue) {
+            if (vault.exists(path)) runCatching { vault.saveDeck(path, deck) }
+            runCatching { reload() }
+        }
+    }
+    fun moveDeck(path: String, folder: String, name: String, onDone: (String) -> Unit = {}) = act(onDone) { vault.moveDeck(path, folder, name) }
+
     fun moveSketch(path: String, folder: String, name: String, onDone: (String) -> Unit = {}) = act(onDone) { vault.moveSketch(path, folder, name) }
 
     fun move(path: String, folder: String, name: String, onDone: (Note) -> Unit = {}) = act(onDone) { vault.move(path, folder, name) }
@@ -220,6 +246,26 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     fun createFolder(parent: String, name: String) = act { vault.createFolder(parent, name) }
     fun renameFolder(path: String, name: String, onDone: (String) -> Unit = {}) = act(onDone) { vault.renameFolder(path, name) }
     fun trashFolder(path: String) = act { vault.trashFolder(path) }
+
+    /** A Word file becomes a note and a PowerPoint file a presentation, beside what's here. The original isn't touched. */
+    fun importOffice(context: android.content.Context, uri: android.net.Uri, folder: String, onDone: (Result<String>) -> Unit) {
+        viewModelScope.launch(queue) {
+            val result = runCatching {
+                val name = context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                    if (c.moveToFirst()) c.getString(0) else null
+                } ?: "Imported"
+                val stem = name.substringBeforeLast('.').ifBlank { "Imported" }
+                val open = { context.contentResolver.openInputStream(uri) ?: throw OfficeException("That file couldn't be opened") }
+                when {
+                    name.endsWith(".pptx", ignoreCase = true) -> vault.createDeck(folder, stem, open().use { Pptx.import(it) })
+                    name.endsWith(".docx", ignoreCase = true) -> vault.create(folder, stem, open().use { Docx.import(it) }).path
+                    else -> throw OfficeException("Squill can open .docx and .pptx files")
+                }
+            }
+            runCatching { reload() }
+            withContext(Dispatchers.Main) { onDone(result) }
+        }
+    }
 
     /** Runs bulk file work (backup, import) in the queue, then reports the count. */
     fun bulk(work: (Vault) -> Int, onDone: (Result<Int>) -> Unit) {

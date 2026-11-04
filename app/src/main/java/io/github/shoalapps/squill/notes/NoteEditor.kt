@@ -178,6 +178,18 @@ fun NoteEditor(
     }
     if (onClose != null) BackHandler { onClose() }
 
+    val exportWord = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.wordprocessingml.document")) { uri ->
+        if (uri != null) {
+            val r = runCatching { context.contentResolver.openOutputStream(uri, "wt")!!.use { Docx.export(state.text.toString(), it) } }
+            android.widget.Toast.makeText(context, if (r.isSuccess) "Saved" else "Couldn't save that file", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+    val exportPdf = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
+        if (uri != null) {
+            val r = runCatching { context.contentResolver.openOutputStream(uri, "wt")!!.use { Pdf.export(note.title, state.text.toString(), it) } }
+            android.widget.Toast.makeText(context, if (r.isSuccess) "Saved" else "Couldn't save that file", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
     val tint = NoteColours.background(colour)
     val paths = library.paths
     val resolver = library.resolver
@@ -260,6 +272,8 @@ fun NoteEditor(
                                 },
                                 leadingIcon = { Icon(Icons.Default.Share, null) },
                             )
+                            DropdownMenuItem({ Text("Save as Word") }, onClick = { menu = false; flush(); runCatching { exportWord.launch("${note.title}.docx") } })
+                            DropdownMenuItem({ Text("Save as PDF") }, onClick = { menu = false; flush(); runCatching { exportPdf.launch("${note.title}.pdf") } })
                             DropdownMenuItem(
                                 { Text("Delete") },
                                 onClick = {
@@ -320,6 +334,8 @@ fun NoteEditor(
                     )
                     LaunchedEffect(Unit) { if (state.text.isEmpty()) runCatching { focus.requestFocus() } }
                 }
+                val words = state.text.toString().split(Regex("\\s+")).count { it.isNotBlank() }
+                if (words > 0) Text(if (words == 1) "1 word" else "$words words", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 12.dp))
                 Backlinks(library.backlinks(path), onOpen = { flush(); onOpenLink(it, "") })
             }
         }
