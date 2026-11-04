@@ -25,12 +25,6 @@ object Scheduler {
         else alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending(context, reminder.id))
     }
 
-    fun snooze(context: Context, id: Long, minutes: Int) {
-        val alarms = context.getSystemService(AlarmManager::class.java)
-        val at = System.currentTimeMillis() + minutes * 60_000L
-        alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending(context, id))
-    }
-
     fun cancel(context: Context, id: Long) {
         context.getSystemService(AlarmManager::class.java).cancel(pending(context, id))
     }

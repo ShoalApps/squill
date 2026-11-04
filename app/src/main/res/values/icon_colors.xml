@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The icon's colours. The README header script reads this file too. -->
+    <color name="icon_bg">#FF2B2F6B</color>
+    <color name="icon_shape">#FFF4F1FF</color>
+</resources>

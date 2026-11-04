@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Themed icons only use the shape, so the nib is cut out of the drop here. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
+        android:pathData="M54,26 C54,26 35,48 35,62 A19,19 0 0 0 73,62 C73,48 54,26 54,26 Z M54,46 L47,66 L54,74 L61,66 Z" />
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M53,60 L55,60 L55,68 L53,68 Z" />
+</vector>

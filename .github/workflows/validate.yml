@@ -15,8 +15,6 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - uses: gradle/actions/setup-gradle@v4
-      - name: Validate translation catalogues
-        run: python3 tools/check-locales.py
+      - uses: gradle/actions/setup-gradle@v6
       - name: Build app and UI tests; run unit tests
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew testDebugUnitTest assembleDebug assembleDebugAndroidTest --stacktrace

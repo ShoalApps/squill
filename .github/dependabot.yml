@@ -1,0 +1,17 @@
+# Weekly library updates. Each one is built and tested by "Check updates", and merged only if it passes.
+version: 2
+updates:
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      androidx:
+        patterns: ["androidx.*"]
+      everything-else:
+        patterns: ["*"]
+        exclude-patterns: ["androidx.*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
