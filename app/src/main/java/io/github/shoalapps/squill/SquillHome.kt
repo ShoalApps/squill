@@ -35,6 +35,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
+import androidx.lifecycle.repeatOnLifecycle
 import io.github.shoalapps.squill.notes.DeckScreen
 import io.github.shoalapps.squill.notes.DrawingScreen
 import io.github.shoalapps.squill.notes.GraphScreen
@@ -82,6 +83,11 @@ fun SquillHome(reminders: RemindersViewModel, notes: NotesViewModel) {
             }
             notes.clearQuick()
         }
+    }
+    LaunchedEffect(openPath) { notes.openFile = openPath?.takeUnless { it.endsWith(".md") } }
+    val owner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    LaunchedEffect(owner) {
+        owner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) { notes.sync(manual = false) }
     }
     if (settings) {
         SettingsScreen(notes, onBack = { settings = false })

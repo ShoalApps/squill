@@ -13,7 +13,7 @@ import java.util.zip.ZipOutputStream
 class OfficeException(message: String) : Exception(message)
 
 /** Refuses files built to exhaust memory: a zip can expand a thousandfold. */
-internal fun readZip(input: InputStream, limit: Long = 256L * 1024 * 1024): Map<String, ByteArray> {
+fun readZip(input: InputStream, limit: Long = 256L * 1024 * 1024): Map<String, ByteArray> {
     val out = LinkedHashMap<String, ByteArray>()
     var total = 0L
     ZipInputStream(input).use { zip ->
@@ -36,7 +36,7 @@ internal fun readZip(input: InputStream, limit: Long = 256L * 1024 * 1024): Map<
     return out
 }
 
-internal fun writeZip(output: OutputStream, files: Map<String, ByteArray>) {
+fun writeZip(output: OutputStream, files: Map<String, ByteArray>) {
     ZipOutputStream(output).use { zip ->
         files.forEach { (name, bytes) ->
             zip.putNextEntry(ZipEntry(name))

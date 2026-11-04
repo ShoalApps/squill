@@ -156,6 +156,15 @@ fun NoteEditor(
         vm.move(path, note.folder, clean) { onPathChanged(it.path) }
     }
 
+    // If sync brought in a newer version while this was open and nothing's unsaved, show it.
+    val latest = library.notes.firstOrNull { it.note.path == path }?.note?.body
+    LaunchedEffect(latest) {
+        if (latest != null && latest != saved && state.text.toString() == saved) {
+            saved = latest
+            state.edit { replace(0, length, latest) }
+        }
+    }
+
     // Saves a moment after you stop typing, when the app goes to the background, and on the way out.
     LaunchedEffect(state) {
         snapshotFlow { state.text.toString() }.drop(1).debounce(500).collect { text ->

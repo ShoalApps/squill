@@ -16,3 +16,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "Squill"
 include(":app")
+include(":core")
+include(":desktop")

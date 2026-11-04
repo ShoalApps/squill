@@ -40,8 +40,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -50,6 +53,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
@@ -150,6 +155,7 @@ fun SettingsScreen(notes: io.github.shoalapps.squill.notes.NotesViewModel, onBac
                     else toast("Add it from your home screen's widget list")
                 },
             )
+            SyncRow(notes)
             ListItem(
                 headlineContent = { Text("Back up notes") },
                 supportingContent = { Text("Save them all as a zip of Markdown files, which any Markdown app can open. Uninstalling Squill deletes them otherwise.") },
@@ -187,11 +193,71 @@ fun SettingsScreen(notes: io.github.shoalapps.squill.notes.NotesViewModel, onBac
             )
             ListItem(
                 headlineContent = { Text("Privacy") },
-                supportingContent = { Text("Your notes and reminders stay on this phone. Squill has no account, no network access and no tracking.") },
+                supportingContent = { Text("Everything stays on your devices. No account, no cloud and no tracking. Squill only connects to a computer you pair it with.") },
                 modifier = Modifier.clickable { open(context, "https://shoalapps.github.io/privacy.html") },
             )
         }
     }
+}
+
+/** Pairing with a computer, and how that's going. */
+@Composable
+private fun SyncRow(notes: io.github.shoalapps.squill.notes.NotesViewModel) {
+    val peers by notes.peerList.collectAsState()
+    val status by notes.syncStatus.collectAsState()
+    var pairing by remember { mutableStateOf(false) }
+    ListItem(
+        headlineContent = { Text("Sync with your computer") },
+        supportingContent = { Text(status ?: if (peers.isEmpty()) "Directly over your own network, encrypted, with no account or cloud" else "Paired with " + peers.joinToString { it.name }) },
+        modifier = Modifier.clickable { if (peers.isEmpty()) pairing = true else notes.sync() },
+    )
+    peers.forEach { peer ->
+        ListItem(
+            headlineContent = { Text(peer.name) },
+            supportingContent = { Text(if (peer.lastSync == 0L) "Not synced yet" else "Last synced " + android.text.format.DateUtils.getRelativeTimeSpanString(peer.lastSync)) },
+            trailingContent = { Row { TextButton(onClick = { notes.sync() }) { Text("Sync now") }; TextButton(onClick = { notes.forget(peer) }) { Text("Forget") } } },
+        )
+    }
+    if (peers.isNotEmpty()) TextButton(onClick = { pairing = true }, modifier = Modifier.padding(horizontal = 8.dp)) { Text("Pair another computer") }
+    if (pairing) PairDialog(notes) { pairing = false }
+}
+
+@Composable
+private fun PairDialog(notes: io.github.shoalapps.squill.notes.NotesViewModel, onClose: () -> Unit) {
+    var code by remember { mutableStateOf("") }
+    var address by remember { mutableStateOf("") }
+    var port by remember { mutableIntStateOf(io.github.shoalapps.squill.sync.SyncProtocol.PORT) }
+    var message by remember { mutableStateOf("Looking for your computer…") }
+    var working by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        notes.discover { found ->
+            found.firstOrNull()?.let { address = it.address; port = it.port; message = "Found " + it.name }
+                ?: run { message = "Couldn't find it automatically. Type the address it shows." }
+        }
+    }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("Pair with your computer") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Open Squill on your computer, choose Pair a device, and type the code it shows.")
+                androidx.compose.material3.OutlinedTextField(code, { code = it }, label = { Text("Code") }, singleLine = true, modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Pairing code" })
+                androidx.compose.material3.OutlinedTextField(address, { address = it.substringBefore(':') }, label = { Text("Computer's address") }, singleLine = true, modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Computer's address" })
+                Text(message, style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = !working && address.isNotBlank() && io.github.shoalapps.squill.sync.SyncCrypto.normalise(code).length == 16, onClick = {
+                working = true
+                message = "Pairing…"
+                notes.pair(address, port, code) { result ->
+                    working = false
+                    result.onSuccess { onClose() }.onFailure { message = "That didn't work. Check the code, and that Squill is showing it." }
+                }
+            }) { Text("Pair") }
+        },
+        dismissButton = { TextButton(onClick = onClose) { Text("Cancel") } },
+    )
 }
 
 /** Supporting Shoal, at the top of Settings as in every Shoal app. */

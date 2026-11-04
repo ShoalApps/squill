@@ -11,67 +11,30 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import io.github.shoalapps.squill.sync.Peer
+import io.github.shoalapps.squill.sync.PeerStore
+import io.github.shoalapps.squill.sync.SyncProtocol
 import java.io.File
 import java.time.LocalDate
-
-/** A note with what's been worked out from its text, so the screens don't have to keep re-reading it. */
-@kotlinx.serialization.Serializable
-data class NoteInfo(val note: Note, val links: List<String>, val tags: List<String>, val excerpt: String, val done: Int, val tasks: Int, val size: Long = 0)
-
-/** A drawing, and when its file last changed. */
-data class SketchInfo(val path: String, val modified: Long, val size: Long, val sketch: Sketch) {
-    val title: String get() = path.substringAfterLast('/').removeSuffix(".svg")
-    val folder: String get() = path.substringBeforeLast('/', "")
-}
-
-/** A presentation, and when its file last changed. */
-data class DeckInfo(val path: String, val modified: Long, val size: Long, val deck: Deck) {
-    val title: String get() = path.substringAfterLast('/').removeSuffix(".deck")
-    val folder: String get() = path.substringBeforeLast('/', "")
-}
-
-/** A layered painting, with the small picture stored inside its file. */
-class PaintingInfo(val path: String, val modified: Long, val size: Long, val thumbnail: ByteArray?) {
-    val title: String get() = path.substringAfterLast('/').removeSuffix(".ora")
-    val folder: String get() = path.substringBeforeLast('/', "")
-}
-
-data class Library(
-    val notes: List<NoteInfo> = emptyList(),
-    val folders: List<String> = emptyList(),
-    val trash: List<Note> = emptyList(),
-    val sketches: List<SketchInfo> = emptyList(),
-    val decks: List<DeckInfo> = emptyList(),
-    val paintings: List<PaintingInfo> = emptyList(),
-) {
-    val paths: List<String> get() = notes.map { it.note.path }
-    val tags: List<String> by lazy { notes.flatMap { it.tags }.distinct().sortedBy { it.lowercase() } }
-    val resolver: Links.Resolver by lazy { Links.Resolver(paths) }
-    private val linkers: Map<String, List<NoteInfo>> by lazy {
-        val found = HashMap<String, MutableList<NoteInfo>>()
-        notes.forEach { info ->
-            info.links.mapNotNull { resolver.resolve(it) }.distinct().forEach { to ->
-                if (to != info.note.path) found.getOrPut(to) { mutableListOf() } += info
-            }
-        }
-        found
-    }
-
-    fun backlinks(path: String): List<NoteInfo> = linkers[path].orEmpty().sortedBy { it.note.title.lowercase() }
-
-    fun graph(showUnwritten: Boolean) = Graph.of(notes.associate { it.note.path to it.links }, showUnwritten)
-
-    /** The drawing an embed means, nearest the top if two folders share the name. */
-    fun sketch(name: String): SketchInfo? = sketches.filter {
-        it.path.equals(name, ignoreCase = true) || it.path.substringAfterLast('/').equals(name.substringAfterLast('/'), ignoreCase = true)
-    }.minByOrNull { it.path.count { c -> c == '/' } }
-}
 
 /** One note at a time goes through a single-file queue, so a save can't overtake a rename. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class NotesViewModel(app: Application) : AndroidViewModel(app) {
     private val root = File(app.filesDir, "vault")
     val vault = Vault(root)
+    val peers = PeerStore(root)
+    /** Held for each file operation, so sync and saving can't touch the same file at once. */
+    private val vaultLock = Any()
+    private val deviceName: String = android.os.Build.MODEL ?: "Android"
+
+    private val _syncStatus = MutableStateFlow<String?>(null)
+    val syncStatus: StateFlow<String?> = _syncStatus.asStateFlow()
+    private val _peerList = MutableStateFlow(peers.peers())
+    val peerList: StateFlow<List<Peer>> = _peerList.asStateFlow()
+    /** A drawing, painting or presentation being worked on: sync leaves it until it's closed. */
+    @Volatile var openFile: String? = null
+    @Volatile private var syncing = false
+    private var pendingSync: kotlinx.coroutines.Job? = null
     private val queue = Dispatchers.IO.limitedParallelism(1)
 
     private val _library = MutableStateFlow(Library())
@@ -188,8 +151,9 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun <T> act(onDone: (T) -> Unit = {}, block: () -> T) {
         viewModelScope.launch(queue) {
-            runCatching(block).onSuccess { result ->
-                reload()
+            runCatching { synchronized(vaultLock) { block() } }.onSuccess { result ->
+                synchronized(vaultLock) { reload() }
+                syncSoon()
                 withContext(Dispatchers.Main) { onDone(result) }
             }.onFailure { e ->
                 _problem.value = (e as? VaultException)?.message ?: "Something went wrong saving that"
@@ -225,8 +189,10 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     /** For when the screen is going away: saved before this returns, so nothing typed is lost. */
     fun saveNow(path: String, body: String, pinned: Boolean, colour: String?) {
         runBlocking(queue) {
-            if (File(root, path).exists()) runCatching { vault.save(path, body, pinned, colour) }
-            runCatching { reload() }
+            synchronized(vaultLock) {
+                if (File(root, path).exists()) runCatching { vault.save(path, body, pinned, colour) }
+                runCatching { reload() }
+            }
         }
     }
 
@@ -237,8 +203,10 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
 
     fun saveSketchNow(path: String, sketch: Sketch) {
         runBlocking(queue) {
-            if (vault.exists(path)) runCatching { vault.saveSketch(path, sketch) }
-            runCatching { reload() }
+            synchronized(vaultLock) {
+                if (vault.exists(path)) runCatching { vault.saveSketch(path, sketch) }
+                runCatching { reload() }
+            }
         }
     }
 
@@ -258,8 +226,10 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     fun saveDeck(path: String, deck: Deck) = act<Unit> { if (vault.exists(path)) vault.saveDeck(path, deck) }
     fun saveDeckNow(path: String, deck: Deck) {
         runBlocking(queue) {
-            if (vault.exists(path)) runCatching { vault.saveDeck(path, deck) }
-            runCatching { reload() }
+            synchronized(vaultLock) {
+                if (vault.exists(path)) runCatching { vault.saveDeck(path, deck) }
+                runCatching { reload() }
+            }
         }
     }
     fun moveDeck(path: String, folder: String, name: String, onDone: (String) -> Unit = {}) = act(onDone) { vault.moveDeck(path, folder, name) }
@@ -303,6 +273,67 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
             withContext(Dispatchers.Main) { onDone(result) }
         }
     }
+
+    /** Sync starts a little after the last change, not after every keystroke's save. */
+    private fun syncSoon() {
+        if (_peerList.value.isEmpty()) return
+        pendingSync?.cancel()
+        pendingSync = viewModelScope.launch {
+            kotlinx.coroutines.delay(30_000)
+            sync(manual = false)
+        }
+    }
+
+    /** Syncs with every paired computer it can reach. When it's automatic, being out of range isn't worth mentioning. */
+    fun sync(manual: Boolean = true) {
+        if (syncing || _peerList.value.isEmpty()) return
+        syncing = true
+        if (manual) _syncStatus.value = "Syncing…"
+        viewModelScope.launch(Dispatchers.IO) {
+            val skip = setOfNotNull(openFile)
+            var moved = 0
+            var failure: String? = null
+            peers.peers().forEach { peer ->
+                val result = runCatching { syncOne(peer, skip) }
+                result.onSuccess { moved += it.total }
+                result.onFailure { failure = it.message ?: "Couldn't reach ${peer.name}" }
+            }
+            syncing = false
+            withContext(queue) { synchronized(vaultLock) { runCatching { reload() } } }
+            _peerList.value = peers.peers()
+            if (manual || moved > 0) _syncStatus.value = failure?.let { "Couldn't reach your computer. Is Squill open on it, on the same network?" }
+                ?: if (moved == 0) "Up to date" else if (moved == 1) "Synced 1 file" else "Synced $moved files"
+        }
+    }
+
+    private fun syncOne(peer: Peer, skip: Set<String>): SyncProtocol.Result = try {
+        SyncProtocol.sync(vault, peers, peer, peers.selfId, deviceName, skip, vaultLock, timeoutMillis = 2500)
+    } catch (e: java.io.IOException) {
+        // Addresses change: ask who's on the network before giving up.
+        val found = SyncProtocol.discover().firstOrNull { it.id == peer.id } ?: throw e
+        val moved = peer.copy(address = found.address, port = found.port)
+        peers.save(moved)
+        SyncProtocol.sync(vault, peers, moved, peers.selfId, deviceName, skip, vaultLock, timeoutMillis = 2500)
+    }
+
+    /** Looks for computers running Squill on this network. */
+    fun discover(onDone: (List<SyncProtocol.Found>) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val found = runCatching { SyncProtocol.discover() }.getOrDefault(emptyList())
+            withContext(Dispatchers.Main) { onDone(found) }
+        }
+    }
+
+    fun pair(address: String, port: Int, code: String, onDone: (Result<Peer>) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching { SyncProtocol.pair(address.trim(), port, code, peers.selfId, deviceName, peers) }
+            _peerList.value = peers.peers()
+            withContext(Dispatchers.Main) { onDone(result) }
+            if (result.isSuccess) sync()
+        }
+    }
+
+    fun forget(peer: Peer) { peers.remove(peer.id); _peerList.value = peers.peers() }
 
     /** Runs bulk file work (backup, import) in the queue, then reports the count. */
     fun bulk(work: (Vault) -> Int, onDone: (Result<Int>) -> Unit) {

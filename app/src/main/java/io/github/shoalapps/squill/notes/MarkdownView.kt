@@ -150,12 +150,15 @@ private fun render(text: String, written: Color, unwritten: Color, codeBackgroun
             fontFamily = if (run.code) FontFamily.Monospace else null,
             background = if (run.code) codeBackground else Color.Unspecified,
         )
+        val note = run.note
+        val tag = run.tag
+        val url = run.url
         val link = when {
-            run.note != null -> LinkAnnotation.Clickable(
-                "note", TextLinkStyles(base.copy(color = if (known(run.note)) written else unwritten, textDecoration = TextDecoration.Underline)),
-            ) { actions.onNote(run.note) }
-            run.tag != null -> LinkAnnotation.Clickable("tag", TextLinkStyles(base.copy(color = written))) { actions.onTag(run.tag) }
-            run.url != null -> LinkAnnotation.Clickable("url", TextLinkStyles(base.copy(color = written, textDecoration = TextDecoration.Underline))) { actions.onUrl(run.url) }
+            note != null -> LinkAnnotation.Clickable(
+                "note", TextLinkStyles(base.copy(color = if (known(note)) written else unwritten, textDecoration = TextDecoration.Underline)),
+            ) { actions.onNote(note) }
+            tag != null -> LinkAnnotation.Clickable("tag", TextLinkStyles(base.copy(color = written))) { actions.onTag(tag) }
+            url != null -> LinkAnnotation.Clickable("url", TextLinkStyles(base.copy(color = written, textDecoration = TextDecoration.Underline))) { actions.onUrl(url) }
             else -> null
         }
         if (link != null) {
