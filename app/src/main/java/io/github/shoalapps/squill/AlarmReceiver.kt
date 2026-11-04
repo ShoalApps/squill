@@ -26,7 +26,7 @@ class AlarmReceiver : BroadcastReceiver() {
             }
             ACTION_SNOOZE -> {
                 NotificationManagerCompat.from(context).cancel(id.toInt())
-                val at = System.currentTimeMillis() + SNOOZE_MINUTES * 60_000L
+                val at = System.currentTimeMillis() + Prefs.snoozeMinutes(context) * 60_000L
                 change(context, id) { it.copy(snoozedUntil = at) }
             }
             else -> ring(context, id)
@@ -46,7 +46,6 @@ class AlarmReceiver : BroadcastReceiver() {
         const val ACTION_DONE = "io.github.shoalapps.squill.DONE"
         const val ACTION_SNOOZE = "io.github.shoalapps.squill.SNOOZE"
         const val CHANNEL = "reminders"
-        const val SNOOZE_MINUTES = 10
 
         fun createChannel(context: Context) {
             val channel = NotificationChannel(CHANNEL, "Reminders", NotificationManager.IMPORTANCE_HIGH)
@@ -90,7 +89,7 @@ class AlarmReceiver : BroadcastReceiver() {
                 .setContentIntent(open)
                 .setAutoCancel(true)
                 .addAction(action(context, r.id, ACTION_DONE, "Done"))
-                .addAction(action(context, r.id, ACTION_SNOOZE, "Snooze $SNOOZE_MINUTES min"))
+                .addAction(action(context, r.id, ACTION_SNOOZE, "Snooze ${Prefs.snoozeMinutes(context)} min"))
                 .build()
             NotificationManagerCompat.from(context).notify(r.id.toInt(), n)
         }

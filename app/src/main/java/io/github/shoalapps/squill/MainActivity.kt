@@ -1,6 +1,7 @@
 package io.github.shoalapps.squill
 
 import android.Manifest
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -20,6 +21,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (savedInstanceState == null) handle(intent)
         setContent {
             val askForNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
             val owner = LocalLifecycleOwner.current
@@ -31,5 +33,22 @@ class MainActivity : ComponentActivity() {
             }
             SquillTheme { SquillScreen(vm) }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handle(intent)
+    }
+
+    /** Shared text and the widget's + button both open the jot-down dialog. */
+    fun handle(intent: Intent) {
+        when (intent.action) {
+            ACTION_JOT -> vm.jot("")
+            Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)?.let { vm.jot(it.trim().lineSequence().first().take(200)) }
+        }
+    }
+
+    companion object {
+        const val ACTION_JOT = "io.github.shoalapps.squill.JOT"
     }
 }

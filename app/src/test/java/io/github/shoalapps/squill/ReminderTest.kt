@@ -95,6 +95,52 @@ class ReminderTest {
         assertEquals(at(2026, 6, 20, 23, 30), withPickedDay(lateEvening, picked))
     }
 
+    @Test fun weekdaysSkipTheWeekend() {
+        // 2 January 2026 is a Friday.
+        val r = reminder(at(2026, 1, 2, 9), Repeat.WEEKDAYS)
+        assertEquals(at(2026, 1, 5, 9), r.nextAfter(at(2026, 1, 2, 10)))
+    }
+
+    @Test fun monthlyComesBackToThe31stAfterAShortMonth() {
+        val r = reminder(at(2026, 1, 31, 9), Repeat.MONTHLY)
+        assertEquals(at(2026, 2, 28, 9), r.nextAfter(at(2026, 2, 1, 9)))
+        assertEquals(at(2026, 3, 31, 9), r.nextAfter(at(2026, 3, 1, 9)))
+    }
+
+    @Test fun yearlyStepsAYear() {
+        assertEquals(at(2027, 3, 4, 9), reminder(at(2026, 3, 4, 9), Repeat.YEARLY).nextAfter(at(2026, 3, 5, 9)))
+    }
+
+    @Test fun sectionsFollowTheCalendarNotTwentyFourHours() {
+        val lateTonight = at(2026, 1, 5, 23)
+        assertEquals(Section.OVERDUE, reminder(at(2026, 1, 5, 22)).section(lateTonight))
+        assertEquals(Section.TODAY, reminder(at(2026, 1, 5, 23, 30)).section(lateTonight))
+        assertEquals(Section.TOMORROW, reminder(at(2026, 1, 6, 1)).section(lateTonight))
+        assertEquals(Section.LATER, reminder(at(2026, 1, 7, 1)).section(lateTonight))
+    }
+
+    @Test fun quickTimesAreInOrderAndInTheFuture() {
+        val evening = at(2026, 1, 5, 19, 30)
+        val times = quickTimes(evening)
+        assertEquals(listOf("In an hour", "Tomorrow", "Next week"), times.map { it.first })
+        assertEquals(at(2026, 1, 6, 9), times[1].second)
+        assertEquals("Tonight", quickTimes(at(2026, 1, 5, 12))[1].first)
+    }
+
+    @Test fun restoringABackupDoesNotSetOffOldReminders() {
+        val now = 100 * day
+        val here = reminder(200 * day).copy(id = 1, title = "here")
+        val backup = listOf(
+            reminder(50 * day).copy(id = 2, title = "old"),
+            reminder(300 * day).copy(id = 1, title = "from backup"),
+            reminder(300 * day).copy(id = 3, title = "  "),
+            reminder(300 * day).copy(id = -4, title = "bad id"),
+        )
+        val merged = mergeBackup(listOf(here), backup, now)
+        assertEquals(setOf("old", "from backup"), merged.map { it.title }.toSet())
+        assertFalse(merged.first { it.id == 2L }.missed(now))
+    }
+
     @Test fun oldSavedRemindersStillLoad() {
         val old = Json.decodeFromString<Reminder>("""{"id":5,"title":"t","whenMillis":100,"repeat":"DAILY"}""")
         assertEquals(Repeat.DAILY, old.repeat)

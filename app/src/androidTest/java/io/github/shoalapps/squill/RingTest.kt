@@ -110,6 +110,30 @@ class RingTest {
         assertNull("rang twice", showing(missed.id))
     }
 
+    @Test fun aBackupRestoresAndBadFilesAreRefused() {
+        val r = Reminder(id = 2009, title = "Keep", whenMillis = System.currentTimeMillis() + minute, repeat = Repeat.MONTHLY)
+        Store.save(context, listOf(r))
+        val text = Store.export(context)
+        Store.save(context, emptyList())
+        assertEquals(1, Store.import(context, text))
+        assertEquals(r, stored(r.id))
+        assertTrue(runCatching { Store.import(context, "not a backup") }.isFailure)
+        assertEquals(1, Store.load(context).size)
+    }
+
+    @Test fun aChangedClockReschedulesWithoutRingingAnythingTwice() {
+        val r = Reminder(id = 2010, title = "Rang", whenMillis = System.currentTimeMillis() - minute, rungAt = 1)
+        Store.save(context, listOf(r))
+        BootReceiver().onReceive(context, Intent(Intent.ACTION_TIMEZONE_CHANGED))
+        assertNull(showing(r.id))
+    }
+
+    @Test fun aStrangerBroadcastDoesNothing() {
+        Store.save(context, listOf(Reminder(id = 2011, title = "Quiet", whenMillis = System.currentTimeMillis() - minute)))
+        BootReceiver().onReceive(context, Intent("something.else"))
+        assertNull(showing(2011))
+    }
+
     @Test fun aDeletedReminderStaysSilent() {
         val r = Reminder(id = 2008, title = "Gone", whenMillis = System.currentTimeMillis() - minute)
         Store.save(context, emptyList())

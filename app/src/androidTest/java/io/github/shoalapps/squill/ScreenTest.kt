@@ -70,6 +70,32 @@ class ScreenTest {
         rule.onNodeWithText("Save").assertIsNotEnabled()
     }
 
+    @Test fun sharedTextOpensTheDialogWithItsTitle() {
+        rule.activity.runOnUiThread { rule.activity.handle(
+            android.content.Intent(android.content.Intent.ACTION_SEND).putExtra(android.content.Intent.EXTRA_TEXT, "Reply to Sam\nmore text"),
+        ) }
+        rule.waitForIdle()
+        rule.onNodeWithText("Reply to Sam").assertExists()
+        rule.onNodeWithText("Save").performClick()
+        rule.waitForIdle()
+        assertEquals(listOf("Reply to Sam"), Store.load(context).map { it.title })
+    }
+
+    @Test fun clearDoneCanBeUndone() {
+        seed(Reminder(3004, "Finished", whenMillis = System.currentTimeMillis() - day, done = true))
+        rule.onNodeWithText("Clear").performClick()
+        rule.waitForIdle()
+        assertTrue(Store.load(context).isEmpty())
+        rule.onNodeWithText("Undo").performClick()
+        rule.waitForIdle()
+        assertEquals(1, Store.load(context).size)
+    }
+
+    @Test fun overdueGetsItsOwnHeading() {
+        seed(Reminder(3005, "Late", whenMillis = System.currentTimeMillis() - day, rungAt = 1))
+        rule.onNodeWithText("Overdue").assertExists()
+    }
+
     @Test fun settingsShowsTheSupportCardAndComesBack() {
         rule.onNodeWithContentDescription("Settings").performClick()
         rule.onNodeWithText("Support Shoal").assertExists()

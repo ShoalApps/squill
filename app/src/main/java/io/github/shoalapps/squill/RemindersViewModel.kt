@@ -17,6 +17,13 @@ class RemindersViewModel(app: Application) : AndroidViewModel(app) {
     /** Without notifications a reminder can't ring at all, so the screen warns about it. */
     val notificationsOn: StateFlow<Boolean> = _notificationsOn.asStateFlow()
 
+    private val _jot = MutableStateFlow<String?>(null)
+    /** The title to start jotting down with, or null when the dialog is closed. */
+    val jot: StateFlow<String?> = _jot.asStateFlow()
+
+    fun jot(title: String) { _jot.value = title }
+    fun closeJot() { _jot.value = null }
+
     init {
         viewModelScope.launch { Store.changes.collect { _items.value = Store.load(getApplication()) } }
     }
@@ -37,6 +44,17 @@ class RemindersViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleDone(reminder: Reminder) {
         NotificationManagerCompat.from(getApplication<Application>()).cancel(reminder.id.toInt())
         save(reminder.copy(done = !reminder.done, snoozedUntil = 0))
+    }
+
+    /** Removes everything ticked off, and returns it so it can be put back. */
+    fun clearDone(): List<Reminder> {
+        val finished = items.value.filter { it.done }
+        Store.update(getApplication()) { list -> list.filterNot { it.done } }
+        return finished
+    }
+
+    fun restore(reminders: List<Reminder>) {
+        Store.update(getApplication()) { list -> list + reminders.filter { r -> list.none { it.id == r.id } } }
     }
 
     fun delete(reminder: Reminder) {

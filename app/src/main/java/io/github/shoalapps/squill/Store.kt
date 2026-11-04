@@ -32,6 +32,16 @@ object Store {
         _changes.value++
     }
 
+    /** The whole list as text, for a backup file. */
+    fun export(context: Context): String = json.encodeToString(serializer, load(context))
+
+    /** Lays a backup file's text over the list. Throws if the text isn't a Squill backup. */
+    fun import(context: Context, text: String, now: Long = System.currentTimeMillis()): Int {
+        val backup = json.decodeFromString(serializer, text)
+        update(context) { mergeBackup(it, backup, now) }
+        return backup.size
+    }
+
     @Synchronized
     fun update(context: Context, change: (List<Reminder>) -> List<Reminder>): List<Reminder> {
         val next = change(load(context))
