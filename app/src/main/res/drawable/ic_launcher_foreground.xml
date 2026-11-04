@@ -1,0 +1,12 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Ink drop -->
+    <path android:fillColor="#F4F1FF"
+        android:pathData="M54,26 C54,26 35,48 35,62 A19,19 0 0 0 73,62 C73,48 54,26 54,26 Z" />
+    <!-- Quill nib cut into the drop -->
+    <path android:fillColor="#2B2F6B"
+        android:pathData="M54,46 L61,66 L54,74 L47,66 Z" />
+    <path android:fillColor="#F4F1FF"
+        android:pathData="M53,60 L55,60 L55,68 L53,68 Z" />
+</vector>
