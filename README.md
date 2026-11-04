@@ -42,6 +42,13 @@ Not everything in Krita is here: there are no layer groups, filter masks, vector
 - Reveal things click by click when presenting, with undo and redo throughout
 - Open and save PowerPoint (.pptx). What's on the slide travels; reveal steps stay in Squill, and imported animations and master slides don't come across
 
+## Sync and your computer
+
+- [Squill for Linux, Windows and Mac](https://github.com/ShoalApps/squill/releases/tag/desktop-latest) keeps your notes as ordinary files in a folder, so other Markdown apps can open it too
+- Write and read notes there with a live preview, backlinks, the graph, tags and search. Drawings, slides and paintings can be viewed there, and edited on your phone
+- Pair your phone with a one-time code. They then sync directly over your own network, encrypted, with no account and no cloud
+- If both change the same note before syncing, both versions are kept. Deletions go to the trash on the other device. Reminders stay on the phone
+
 ## Reminders
 
 - One-off, daily, weekday, weekly, monthly and yearly reminders that ring at the exact minute, even in Doze
@@ -52,7 +59,7 @@ Not everything in Krita is here: there are no layer groups, filter masks, vector
 - Back up to a file of your choosing and restore it later
 - Anything that came due while your phone was off rings when it starts up again
 - Colours follow your wallpaper on Android 12+
-- Everything stays on your phone: no account, no network, no tracking
+- No account, no cloud and no tracking: Squill only ever connects to a computer you've paired it with
 
 Part of [Shoal](https://github.com/ShoalApps). Free software under the GPL-3.0.
 

@@ -163,6 +163,17 @@ class LinksTest {
         assertNotNull(layout.nearest(layout.x[2], layout.y[2], 5f))
     }
 
+    @Test fun fittingKeepsEveryNodeInView() {
+        val g = Graph.of((0 until 40).associate { "n$it.md" to listOf("n${(it + 1) % 40}") })
+        val layout = GraphLayout(g)
+        repeat(200) { layout.step() }
+        val (zoom, dx, dy) = layout.fit(800f, 600f, 40f)
+        for (i in layout.x.indices) {
+            assertTrue(layout.x[i] * zoom + dx in -400f..400f)
+            assertTrue(layout.y[i] * zoom + dy in -300f..300f)
+        }
+    }
+
     @Test fun anEmptyGraphIsFine() {
         assertEquals(0f, GraphLayout(Graph(emptyList(), emptyList())).step())
     }

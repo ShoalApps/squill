@@ -1,0 +1,53 @@
+name: Build desktop app
+
+on:
+  push:
+    branches: [main]
+    paths: ['core/**', 'desktop/**', 'build.gradle.kts', 'settings.gradle.kts', '.github/workflows/desktop.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            task: packageDeb createDistributable
+          - os: windows-latest
+            task: packageMsi
+          - os: macos-latest
+            task: packageDmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Build
+        shell: bash
+        run: |
+          tasks=""
+          for t in ${{ matrix.task }}; do tasks="$tasks :desktop:$t"; done
+          ./gradlew $tasks --stacktrace
+      - name: Give the files fixed names, so links to them keep working
+        shell: bash
+        run: |
+          mkdir out
+          cd desktop/build/compose/binaries/main
+          for f in deb/*.deb; do [ -f "$f" ] && cp "$f" "$GITHUB_WORKSPACE/out/Squill-linux.deb"; done
+          for f in msi/*.msi; do [ -f "$f" ] && cp "$f" "$GITHUB_WORKSPACE/out/Squill-windows.msi"; done
+          for f in dmg/*.dmg; do [ -f "$f" ] && cp "$f" "$GITHUB_WORKSPACE/out/Squill-mac.dmg"; done
+          if [ -d app/Squill ]; then tar -C app -czf "$GITHUB_WORKSPACE/out/Squill-linux.tar.gz" Squill; fi
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: desktop-latest
+          name: Squill for your computer
+          body: Squill for Linux, Windows and Mac. It syncs directly with Squill on your phone over your own network. The Windows and Mac versions aren't signed yet, so your computer will warn you the first time you open them.
+          files: out/*
+          make_latest: false

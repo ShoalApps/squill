@@ -156,12 +156,12 @@ private fun NotesPage(model: Model, library: Library, open: String?, onOpen: (St
             OutlinedTextField(query, { query = it }, placeholder = { Text("Search your notes") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Button(onClick = { model.create(folder, "Untitled") { onOpen(it.path) } }) { Text("New note") }
-                OutlinedButton(onClick = { asking = true }) { Text("Folder") }
+                OutlinedButton(onClick = { asking = true }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)) { Text("Folder", maxLines = 1) }
                 OutlinedButton(onClick = {
                     val d = FileDialog(null as Frame?, "Open a Word file", FileDialog.LOAD).apply { isVisible = true }
                     val name = d.file
                     if (name != null) model.create(folder, name.substringBeforeLast('.'), runCatching { File(d.directory, name).inputStream().use { Docx.import(it) } }.getOrDefault("That file couldn't be read.")) { onOpen(it.path) }
-                }) { Text("Word") }
+                }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)) { Text("Import", maxLines = 1) }
             }
             if (library.tags.isNotEmpty()) FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 library.tags.take(24).forEach { t -> FilterChip(t == tag, { tag = if (t == tag) null else t }, label = { Text("#$t") }) }

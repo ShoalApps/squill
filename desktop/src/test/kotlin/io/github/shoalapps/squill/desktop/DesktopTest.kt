@@ -77,3 +77,30 @@ class DesktopTest {
         assertTrue(!m.vault.exists("Welcome.md"))
     }
 }
+
+/** Only for checking against a real phone: run with SQUILL_LIVE_HOST set. */
+class LiveHostTest {
+    @Test fun hostForARealPhone() {
+        val code = System.getenv("SQUILL_LIVE_HOST") ?: return
+        val log = File(System.getenv("SQUILL_LIVE_LOG"))
+        val dir = java.nio.file.Files.createTempDirectory("squill-live").toFile()
+        val vault = io.github.shoalapps.squill.notes.Vault(dir)
+        vault.create("", "From computer", "Written on the desktop.\n")
+        val peers = PeerStore(dir)
+        val server = SyncProtocol.Server(vault, peers, "Test computer")
+        server.start()
+        server.allowPairing(code)
+        fun report(s: String) = log.appendText(s + "\n")
+        report("listening on ${server.boundPort}")
+        val end = System.currentTimeMillis() + 240_000
+        var phase = 0
+        while (System.currentTimeMillis() < end) {
+            if (phase == 0 && peers.peers().isNotEmpty()) { report("paired with " + peers.peers().single().name); phase = 1 }
+            val notes = vault.notes().map { it.title }
+            if (phase == 1 && notes.size > 1 && peers.peers().single().lastSync > 0) { report("synced, notes here: " + notes.sorted()); phase = 2; vault.create("", "Second from computer", "Later.\n") }
+            if (phase == 2 && File(System.getenv("SQUILL_LIVE_LOG") + ".stop").exists()) { report("final: " + vault.notes().map { it.title + "=" + it.body.trim().take(30) }.sorted()); break }
+            Thread.sleep(500)
+        }
+        server.close()
+    }
+}

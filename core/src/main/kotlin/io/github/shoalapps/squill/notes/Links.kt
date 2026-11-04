@@ -244,6 +244,14 @@ class GraphLayout(private val graph: Graph, seed: Int = 7) {
         return (cx.toLong() shl 32) or (cy.toLong() and 0xFFFFFFFFL)
     }
 
+    /** The zoom and offset (from the middle) that keep every node in a view this size, leaving [margin] around it. */
+    fun fit(width: Float, height: Float, margin: Float): Triple<Float, Float, Float> {
+        if (x.isEmpty()) return Triple(1f, 0f, 0f)
+        val minX = x.min(); val maxX = x.max(); val minY = y.min(); val maxY = y.max()
+        val zoom = minOf((width - margin * 2f) / (maxX - minX).coerceAtLeast(1f), (height - margin * 2f) / (maxY - minY).coerceAtLeast(1f)).coerceIn(.01f, 1.5f)
+        return Triple(zoom, -(minX + maxX) / 2f * zoom, -(minY + maxY) / 2f * zoom)
+    }
+
     fun nearest(px: Float, py: Float, within: Float): Int? {
         var best = -1
         var bestD = within * within

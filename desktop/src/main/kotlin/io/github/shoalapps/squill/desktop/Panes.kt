@@ -293,6 +293,8 @@ private fun GraphCanvas(graph: Graph, onOpen: (GraphNode) -> Unit, modifier: Mod
     var zoom by remember(graph) { mutableFloatStateOf(1f) }
     var panX by remember(graph) { mutableFloatStateOf(0f) }
     var panY by remember(graph) { mutableFloatStateOf(0f) }
+    // Everything stays in view until you move or zoom it yourself.
+    var moved by remember(graph) { mutableStateOf(false) }
     LaunchedEffect(layout) {
         var moving = Float.MAX_VALUE
         var steps = 0
@@ -307,13 +309,14 @@ private fun GraphCanvas(graph: Graph, onOpen: (GraphNode) -> Unit, modifier: Mod
     val measurer = rememberTextMeasurer(cacheSize = 256)
     Canvas(
         modifier
-            .pointerInput(graph) { detectDragGestures { change, drag -> change.consume(); panX += drag.x; panY += drag.y } }
+            .pointerInput(graph) { detectDragGestures { change, drag -> change.consume(); moved = true; panX += drag.x; panY += drag.y } }
             .pointerInput(graph) {
                 awaitPointerEventScope {
                     while (true) {
                         val e = awaitPointerEvent()
                         if (e.type == androidx.compose.ui.input.pointer.PointerEventType.Scroll) {
                             val ch = e.changes.first()
+                            moved = true
                             zoom = (zoom * if (ch.scrollDelta.y < 0) 1.1f else .9f).coerceIn(.1f, 6f)
                             ch.consume()
                         }
@@ -329,6 +332,10 @@ private fun GraphCanvas(graph: Graph, onOpen: (GraphNode) -> Unit, modifier: Mod
             },
     ) {
         frame.let { }
+        if (!moved) {
+            val (z, x, y) = layout.fit(size.width, size.height, 70f)
+            zoom = z; panX = x; panY = y
+        }
         val middle = Offset(size.width / 2f + panX, size.height / 2f + panY)
         fun at(i: Int) = Offset(middle.x + layout.x[i] * zoom, middle.y + layout.y[i] * zoom)
         graph.edges.forEach { (a, b) -> drawLine(c.outlineVariant, at(a), at(b), 1.5f) }

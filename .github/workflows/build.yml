@@ -32,7 +32,7 @@ jobs:
         env:
           SHOAL_KEYSTORE_PASSWORD: ${{ secrets.SHOAL_KEYSTORE_PASSWORD }}
           SHOAL_KEY_ALIAS: ${{ secrets.SHOAL_KEY_ALIAS }}
-        run: ./gradlew assembleRelease testDebugUnitTest --stacktrace
+        run: ./gradlew assembleRelease testDebugUnitTest :core:test :desktop:test --stacktrace
 
       - name: Publish release
         run: cp app/build/outputs/apk/release/app-release.apk Squill.apk

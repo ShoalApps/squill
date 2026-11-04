@@ -33,7 +33,7 @@ compose.desktop {
             description = "Notes, drawings, paintings and slides, as files on your computer"
             vendor = "Shoal"
             licenseFile.set(rootProject.file("LICENSE"))
-            modules("java.logging", "jdk.unsupported")
+            modules("java.instrument", "jdk.unsupported")
             linux { iconFile.set(project.file("icon.png")); menuGroup = "Office" }
             windows { iconFile.set(project.file("icon.ico")); menu = true; shortcut = true }
             macOS { iconFile.set(project.file("icon.icns")) }

@@ -81,6 +81,8 @@ private fun GraphCanvas(graph: Graph, onOpen: (GraphNode) -> Unit, modifier: Mod
     var zoom by remember(graph) { mutableFloatStateOf(1f) }
     var panX by remember(graph) { mutableFloatStateOf(0f) }
     var panY by remember(graph) { mutableFloatStateOf(0f) }
+    // Everything stays in view until you move or zoom it yourself.
+    var moved by remember(graph) { mutableStateOf(false) }
     LaunchedEffect(layout) {
         var moving = Float.MAX_VALUE
         while (moving > .05f) {
@@ -99,6 +101,7 @@ private fun GraphCanvas(graph: Graph, onOpen: (GraphNode) -> Unit, modifier: Mod
             .semantics { contentDescription = "Graph of ${graph.nodes.size} notes and ${graph.edges.size} links" }
             .pointerInput(graph) {
                 detectTransformGestures { centroid, pan, gesture, _ ->
+                    moved = true
                     val next = (zoom * gesture).coerceIn(.2f, 5f)
                     val middleX = size.width / 2f
                     val middleY = size.height / 2f
@@ -117,6 +120,10 @@ private fun GraphCanvas(graph: Graph, onOpen: (GraphNode) -> Unit, modifier: Mod
             },
     ) {
         frame.let { } // Redraw as the layout moves.
+        if (!moved) {
+            val (z, x, y) = layout.fit(size.width, size.height, 56.dp.toPx())
+            zoom = z; panX = x; panY = y
+        }
         val middle = Offset(size.width / 2f + panX, size.height / 2f + panY)
         fun at(i: Int) = Offset(middle.x + layout.x[i] * zoom, middle.y + layout.y[i] * zoom)
         graph.edges.forEach { (a, b) -> drawLine(c.outlineVariant, at(a), at(b), strokeWidth = 1.5.dp.toPx()) }
