@@ -45,6 +45,7 @@ class MainActivity : ComponentActivity() {
     fun handle(intent: Intent) {
         when (intent.action) {
             ACTION_JOT -> vm.jot("")
+            ACTION_NEW_NOTE, ACTION_NEW_LIST, ACTION_NEW_DRAWING, ACTION_TODAY -> notes.quick(intent.action!!)
             Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)?.takeIf { it.isNotBlank() }?.let { text ->
                 // Squill appears twice in the share sheet: as a note, and as a reminder.
                 if (intent.component?.className?.endsWith(".ShareAsNote") == true) notes.share(text)
@@ -55,5 +56,9 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val ACTION_JOT = "io.github.shoalapps.squill.JOT"
+        const val ACTION_NEW_NOTE = "io.github.shoalapps.squill.NEW_NOTE"
+        const val ACTION_NEW_LIST = "io.github.shoalapps.squill.NEW_LIST"
+        const val ACTION_NEW_DRAWING = "io.github.shoalapps.squill.NEW_DRAWING"
+        const val ACTION_TODAY = "io.github.shoalapps.squill.TODAY"
     }
 }

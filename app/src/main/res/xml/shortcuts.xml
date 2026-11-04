@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Long-press Squill's icon to start writing straight away. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="note" android:enabled="true" android:icon="@drawable/shortcut_note" android:shortcutShortLabel="@string/shortcut_note">
+        <intent android:action="io.github.shoalapps.squill.NEW_NOTE" android:targetPackage="${applicationId}" android:targetClass="io.github.shoalapps.squill.MainActivity" />
+    </shortcut>
+    <shortcut android:shortcutId="list" android:enabled="true" android:icon="@drawable/shortcut_list" android:shortcutShortLabel="@string/shortcut_list">
+        <intent android:action="io.github.shoalapps.squill.NEW_LIST" android:targetPackage="${applicationId}" android:targetClass="io.github.shoalapps.squill.MainActivity" />
+    </shortcut>
+    <shortcut android:shortcutId="draw" android:enabled="true" android:icon="@drawable/shortcut_draw" android:shortcutShortLabel="@string/shortcut_draw">
+        <intent android:action="io.github.shoalapps.squill.NEW_DRAWING" android:targetPackage="${applicationId}" android:targetClass="io.github.shoalapps.squill.MainActivity" />
+    </shortcut>
+    <shortcut android:shortcutId="today" android:enabled="true" android:icon="@drawable/shortcut_today" android:shortcutShortLabel="@string/shortcut_today">
+        <intent android:action="io.github.shoalapps.squill.TODAY" android:targetPackage="${applicationId}" android:targetClass="io.github.shoalapps.squill.MainActivity" />
+    </shortcut>
+</shortcuts>

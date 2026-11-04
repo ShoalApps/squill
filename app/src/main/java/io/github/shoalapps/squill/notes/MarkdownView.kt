@@ -2,12 +2,15 @@ package io.github.shoalapps.squill.notes
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -20,7 +23,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
@@ -35,6 +41,8 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 
 class MarkdownActions(
+    val sketch: (String) -> Sketch? = { null },
+    val onSketch: (String) -> Unit = {},
     val onNote: (String) -> Unit,
     val onUrl: (String) -> Unit,
     val onTag: (String) -> Unit,
@@ -81,6 +89,16 @@ fun MarkdownView(text: String, actions: MarkdownActions, known: (String) -> Bool
                 )
                 is Block.Table -> Table(block, actions, known)
                 is Block.Rule -> HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                is Block.Embed -> {
+                    val drawing = actions.sketch(block.target)
+                    if (drawing == null) Text("Missing drawing: ${block.target}", color = c.error, style = type.bodyMedium)
+                    else SketchPicture(
+                        drawing,
+                        Modifier.fillMaxWidth().heightIn(max = 320.dp).aspectRatio(aspectOf(drawing), matchHeightConstraintsFirst = false)
+                            .clip(RoundedCornerShape(12.dp)).clickable { actions.onSketch(block.target) }
+                            .semantics { contentDescription = "Drawing: ${block.target.removeSuffix(".svg")}" },
+                    )
+                }
             }
         }
     }
@@ -144,4 +162,9 @@ private fun render(text: String, written: Color, unwritten: Color, codeBackgroun
             pushLink(link); append(run.text); pop()
         } else withStyle(base) { append(run.text) }
     }
+}
+
+private fun aspectOf(sketch: Sketch): Float {
+    val b = sketch.bounds()
+    return ((b[2] - b[0]) / (b[3] - b[1])).coerceIn(.5f, 3f)
 }

@@ -119,6 +119,7 @@ fun NoteEditor(
     onRemind: (String) -> Unit,
     onGraph: (String) -> Unit,
     onFlushReady: ((() -> Unit)?) -> Unit,
+    onOpenSketch: (String) -> Unit = {},
 ) {
     val info = remember(path) { library.notes.firstOrNull { it.note.path == path } }
     if (info == null) {
@@ -179,9 +180,24 @@ fun NoteEditor(
 
     val tint = NoteColours.background(colour)
     val paths = library.paths
-    val known = remember(paths) { { target: String -> Links.resolve(target, paths) != null } }
+    val resolver = library.resolver
+    val known = remember(resolver) { { target: String -> resolver.resolve(target) != null } }
+    fun addDrawing() {
+        flush()
+        vm.createSketch(note.folder, note.title) { made ->
+            val name = made.substringAfterLast('/')
+            val at = state.selection.max
+            val before = state.text.toString()
+            val lead = if (at == 0 || before[at - 1] == '\n') "" else "\n"
+            state.edit { replace(at, at, "$lead![[$name]]\n") }
+            flush()
+            onOpenSketch(made)
+        }
+    }
     val actions = remember(path, known) {
         MarkdownActions(
+            sketch = { name -> vm.library.value.sketch(name)?.sketch },
+            onSketch = { name -> vm.library.value.sketch(name)?.let { flush(); onOpenSketch(it.path) } },
             onNote = { flush(); onOpenLink(it, note.folder) },
             onUrl = onUrl,
             onTag = onTag,
@@ -261,7 +277,7 @@ fun NoteEditor(
         bottomBar = {
             if (!reading) Column(Modifier.imePadding().navigationBarsPadding()) {
                 LinkSuggestions(state, library, note.path)
-                FormatBar(state)
+                FormatBar(state, ::addDrawing)
             }
         },
     ) { padding ->
@@ -378,7 +394,7 @@ private fun LinkSuggestions(state: TextFieldState, library: Library, self: Strin
 }
 
 @Composable
-private fun FormatBar(state: TextFieldState) {
+private fun FormatBar(state: TextFieldState, onDraw: () -> Unit) {
     fun apply(change: (Edit) -> Edit) {
         val e = change(Edit(state.text.toString(), state.selection.min, state.selection.max))
         state.edit {
@@ -390,6 +406,7 @@ private fun FormatBar(state: TextFieldState) {
         Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { state.undoState.undo() }, enabled = state.undoState.canUndo) { Icon(painterResource(R.drawable.ic_undo), contentDescription = "Undo") }
             IconButton(onClick = { state.undoState.redo() }, enabled = state.undoState.canRedo) { Icon(painterResource(R.drawable.ic_redo), contentDescription = "Redo") }
+            IconButton(onClick = onDraw) { Icon(painterResource(R.drawable.ic_brush), contentDescription = "Add a drawing") }
             Mark("H", "Heading") { apply { Formatting.linePrefix(it, "## ") } }
             Mark("B", "Bold", bold = true) { apply { Formatting.wrap(it, "**") } }
             Mark("I", "Italic") { apply { Formatting.wrap(it, "*") } }

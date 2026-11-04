@@ -15,17 +15,42 @@ import java.io.File
 import java.time.LocalDate
 
 /** A note with what's been worked out from its text, so the screens don't have to keep re-reading it. */
-data class NoteInfo(val note: Note, val links: List<String>, val tags: List<String>, val excerpt: String, val done: Int, val tasks: Int)
+@kotlinx.serialization.Serializable
+data class NoteInfo(val note: Note, val links: List<String>, val tags: List<String>, val excerpt: String, val done: Int, val tasks: Int, val size: Long = 0)
 
-data class Library(val notes: List<NoteInfo> = emptyList(), val folders: List<String> = emptyList(), val trash: List<Note> = emptyList()) {
+/** A drawing, and when its file last changed. */
+data class SketchInfo(val path: String, val modified: Long, val size: Long, val sketch: Sketch) {
+    val title: String get() = path.substringAfterLast('/').removeSuffix(".svg")
+    val folder: String get() = path.substringBeforeLast('/', "")
+}
+
+data class Library(
+    val notes: List<NoteInfo> = emptyList(),
+    val folders: List<String> = emptyList(),
+    val trash: List<Note> = emptyList(),
+    val sketches: List<SketchInfo> = emptyList(),
+) {
     val paths: List<String> get() = notes.map { it.note.path }
-    val tags: List<String> get() = notes.flatMap { it.tags }.distinct().sortedBy { it.lowercase() }
+    val tags: List<String> by lazy { notes.flatMap { it.tags }.distinct().sortedBy { it.lowercase() } }
+    val resolver: Links.Resolver by lazy { Links.Resolver(paths) }
+    private val linkers: Map<String, List<NoteInfo>> by lazy {
+        val found = HashMap<String, MutableList<NoteInfo>>()
+        notes.forEach { info ->
+            info.links.mapNotNull { resolver.resolve(it) }.distinct().forEach { to ->
+                if (to != info.note.path) found.getOrPut(to) { mutableListOf() } += info
+            }
+        }
+        found
+    }
 
-    fun backlinks(path: String): List<NoteInfo> = notes.filter { info ->
-        info.note.path != path && info.links.any { Links.resolve(it, paths) == path }
-    }.sortedBy { it.note.title.lowercase() }
+    fun backlinks(path: String): List<NoteInfo> = linkers[path].orEmpty().sortedBy { it.note.title.lowercase() }
 
     fun graph(showUnwritten: Boolean) = Graph.of(notes.associate { it.note.path to it.links }, showUnwritten)
+
+    /** The drawing an embed means, nearest the top if two folders share the name. */
+    fun sketch(name: String): SketchInfo? = sketches.filter {
+        it.path.equals(name, ignoreCase = true) || it.path.substringAfterLast('/').equals(name.substringAfterLast('/'), ignoreCase = true)
+    }.minByOrNull { it.path.count { c -> c == '/' } }
 }
 
 /** One note at a time goes through a single-file queue, so a save can't overtake a rename. */
@@ -49,8 +74,27 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     fun share(text: String) { _shared.value = text }
     fun clearShared() { _shared.value = null }
 
+    private val _quick = MutableStateFlow<String?>(null)
+    /** A launcher shortcut waiting to be acted on. */
+    val quick: StateFlow<String?> = _quick.asStateFlow()
+    fun quick(action: String) { _quick.value = action }
+    fun clearQuick() { _quick.value = null }
+
+    private val indexFile = File(app.cacheDir, "notes-index.json")
+    private val indexJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+    private val indexSerializer = kotlinx.serialization.builtins.ListSerializer(NoteInfo.serializer())
+    private var known = HashMap<String, NoteInfo>()
+    private var knownSketches = HashMap<String, SketchInfo>()
+    private var indexWrite: kotlinx.coroutines.Job? = null
+
     init {
         viewModelScope.launch(queue) {
+            // Show what was here last time straight away, then quietly catch up with any changes.
+            runCatching {
+                val saved = indexJson.decodeFromString(indexSerializer, indexFile.readText())
+                known = saved.associateByTo(HashMap(saved.size * 2)) { it.note.path }
+                _library.value = Library(saved)
+            }
             seedOnce()
             reload()
         }
@@ -66,13 +110,48 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         marker.writeText("")
     }
 
+    /** Re-reads only what's changed, so saving one note in a big vault stays instant. */
     private fun reload() {
-        val notes = vault.notes().map { note ->
-            val (links, tags) = Links.scan(note.body)
-            val (done, tasks) = Markdown.taskCount(note.body)
-            NoteInfo(note, links, tags, Markdown.excerpt(note.body), done, tasks)
+        val stats = vault.stats()
+        val seen = HashMap<String, NoteInfo>(stats.size * 2)
+        val seenSketches = HashMap<String, SketchInfo>()
+        var changed = false
+        stats.forEach { stat ->
+            if (stat.path.endsWith(".svg", ignoreCase = true)) {
+                val old = knownSketches[stat.path]
+                if (old != null && old.modified == stat.modified && old.size == stat.size) seenSketches[stat.path] = old
+                else Sketch.parse(vault.readText(stat.path))?.let { seenSketches[stat.path] = SketchInfo(stat.path, stat.modified, stat.size, it) }
+                return@forEach
+            }
+            val old = known[stat.path]
+            if (old != null && old.note.modified == stat.modified && old.size == stat.size) {
+                seen[stat.path] = old
+            } else runCatching {
+                val note = vault.read(stat.path)
+                val (links, tags) = Links.scan(note.body)
+                val (done, tasks) = Markdown.taskCount(note.body)
+                seen[stat.path] = NoteInfo(note, links, tags, Markdown.excerpt(note.body), done, tasks, stat.size)
+                changed = true
+            }
         }
-        _library.value = Library(notes, vault.folders(), vault.trashed())
+        if (seen.size != known.size) changed = true
+        known = seen
+        knownSketches = seenSketches
+        _library.value = Library(seen.values.toList(), vault.folders(), vault.trashed(), seenSketches.values.toList())
+        if (changed) writeIndexSoon()
+    }
+
+    /** Written a moment later, not after every keystroke's save. */
+    private fun writeIndexSoon() {
+        indexWrite?.cancel()
+        indexWrite = viewModelScope.launch(queue) {
+            kotlinx.coroutines.delay(3000)
+            runCatching {
+                val tmp = File(indexFile.path + ".tmp")
+                tmp.writeText(indexJson.encodeToString(indexSerializer, known.values.toList()))
+                tmp.renameTo(indexFile)
+            }
+        }
     }
 
     private fun <T> act(onDone: (T) -> Unit = {}, block: () -> T) {
@@ -118,6 +197,20 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { reload() }
         }
     }
+
+    fun createSketch(folder: String, name: String, onDone: (String) -> Unit) = act(onDone) { vault.createSketch(folder, name) }
+
+    /** Saved in the queue, unless the drawing's gone. */
+    fun saveSketch(path: String, sketch: Sketch) = act<Unit> { if (vault.exists(path)) vault.saveSketch(path, sketch) }
+
+    fun saveSketchNow(path: String, sketch: Sketch) {
+        runBlocking(queue) {
+            if (vault.exists(path)) runCatching { vault.saveSketch(path, sketch) }
+            runCatching { reload() }
+        }
+    }
+
+    fun moveSketch(path: String, folder: String, name: String, onDone: (String) -> Unit = {}) = act(onDone) { vault.moveSketch(path, folder, name) }
 
     fun move(path: String, folder: String, name: String, onDone: (Note) -> Unit = {}) = act(onDone) { vault.move(path, folder, name) }
     fun trash(path: String, onDone: () -> Unit = {}) = act<Unit>({ onDone() }) { vault.trash(path) }

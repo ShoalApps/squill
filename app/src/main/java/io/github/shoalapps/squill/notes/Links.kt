@@ -21,7 +21,7 @@ object Links {
                 is Block.Task -> read(b.text)
                 is Block.Quote -> read(b.text)
                 is Block.Table -> (b.header + b.rows.flatten()).forEach(::read)
-                is Block.Code, is Block.Rule -> Unit
+                is Block.Code, is Block.Rule, is Block.Embed -> Unit
             }
         }
         return links.distinct() to tags.distinct()
@@ -30,22 +30,39 @@ object Links {
     /** Takes off a #heading and any .md, so that a link's target can be matched against note names. */
     private fun clean(target: String) = target.substringBefore('#').trim().removeSuffix(".md").trim('/')
 
+    /** The note a link means. Build a [Resolver] instead when looking up many. */
+    fun resolve(target: String, paths: Collection<String>): String? = Resolver(paths).resolve(target)
+
     /**
-     * The note a link means, by [paths] without their .md. A full path wins; otherwise the name
-     * alone, and if two folders both have that name, the one nearest the top (as in Obsidian).
+     * Works out what links mean, in constant time however many notes there are. A full path wins;
+     * otherwise the name alone, and if two folders both have that name, the one nearest the top
+     * (as in Obsidian).
      */
-    fun resolve(target: String, paths: Collection<String>): String? {
-        val wanted = clean(target)
-        if (wanted.isEmpty()) return null
-        paths.firstOrNull { it.equals("$wanted.md", ignoreCase = true) }?.let { return it }
-        val name = wanted.substringAfterLast('/')
-        return paths.filter { it.substringAfterLast('/').removeSuffix(".md").equals(name, ignoreCase = true) }
-            .filter { "/" !in wanted || it.removeSuffix(".md").endsWith("/$wanted", ignoreCase = true) }
-            .minWithOrNull(compareBy({ it.count { c -> c == '/' } }, { it }))
+    class Resolver(paths: Collection<String>) {
+        private val byPath = HashMap<String, String>(paths.size * 2)
+        private val byName = HashMap<String, MutableList<String>>(paths.size * 2)
+
+        init {
+            paths.forEach { path ->
+                byPath[path.lowercase()] = path
+                byName.getOrPut(path.substringAfterLast('/').removeSuffix(".md").lowercase()) { mutableListOf() } += path
+            }
+            byName.values.forEach { list -> list.sortWith(compareBy({ it.count { c -> c == '/' } }, { it })) }
+        }
+
+        fun resolve(target: String): String? {
+            val wanted = clean(target)
+            if (wanted.isEmpty()) return null
+            byPath["${wanted.lowercase()}.md"]?.let { return it }
+            val same = byName[wanted.substringAfterLast('/').lowercase()] ?: return null
+            if ("/" !in wanted) return same.firstOrNull()
+            return same.firstOrNull { it.removeSuffix(".md").endsWith("/$wanted", ignoreCase = true) }
+        }
     }
 
     /** Points links in [text] at a note's new name, leaving code, headings and aliases alone. */
     fun retarget(text: String, oldPath: String, newPath: String, paths: Collection<String>): String {
+        val resolver = Resolver(paths)
         val oldName = oldPath.removeSuffix(".md")
         val newName = newPath.removeSuffix(".md")
         val code = codeRanges(text)
@@ -53,7 +70,7 @@ object Links {
             val at = m.range.first
             if (code.any { at in it }) return@replace m.value
             val target = m.groupValues[1]
-            if (resolve(target, paths) != oldPath) return@replace m.value
+            if (resolver.resolve(target) != oldPath) return@replace m.value
             // Keep the style it was written in: a bare name stays a bare name if that still works.
             val written = clean(target)
             val replacement = if ("/" in written) newName else newName.substringAfterLast('/')
@@ -61,6 +78,10 @@ object Links {
             "[[$replacement$heading${m.groupValues[2]}]]"
         }
     }
+
+    /** Points ![[embeds]] of a drawing at its new name. */
+    fun retargetEmbed(text: String, oldName: String, newName: String): String =
+        Regex("!\\[\\[" + Regex.escape(oldName) + "((?:\\|[^\\]]*)?)]]", RegexOption.IGNORE_CASE).replace(text) { "![[" + newName + it.groupValues[1] + "]]" }
 
     private val wikiLink = Regex("\\[\\[([^\\]|\\n]+)(\\|[^\\]\\n]*)?]]")
 
@@ -99,11 +120,12 @@ data class Graph(val nodes: List<GraphNode>, val edges: List<Pair<Int, Int>>) {
         /** [notes] maps each note's path to the targets it links to. */
         fun of(notes: Map<String, List<String>>, showUnwritten: Boolean = true): Graph {
             val paths = notes.keys
+            val resolver = Links.Resolver(paths)
             val pairs = linkedSetOf<Pair<String, String>>()
             val unwritten = linkedMapOf<String, String>()
             notes.forEach { (from, targets) ->
                 targets.forEach { target ->
-                    val to = Links.resolve(target, paths)
+                    val to = resolver.resolve(target)
                     when {
                         to == from -> Unit
                         to != null -> pairs += ordered(from, to)
@@ -172,7 +194,7 @@ class GraphLayout(private val graph: Graph, seed: Int = 7) {
         if (n == 0) return 0f
         val fx = FloatArray(n)
         val fy = FloatArray(n)
-        for (i in 0 until n) for (j in i + 1 until n) {
+        fun push(i: Int, j: Int) {
             var dx = x[i] - x[j]
             var dy = y[i] - y[j]
             var d2 = dx * dx + dy * dy
@@ -180,6 +202,21 @@ class GraphLayout(private val graph: Graph, seed: Int = 7) {
             val f = 9000f / d2
             fx[i] += dx * f; fy[i] += dy * f
             fx[j] -= dx * f; fy[j] -= dy * f
+        }
+        if (n <= EVERY_PAIR_LIMIT) {
+            for (i in 0 until n) for (j in i + 1 until n) push(i, j)
+        } else {
+            // A big vault only pushes against its neighbours, so a frame stays a frame.
+            val cells = HashMap<Long, MutableList<Int>>(n)
+            for (i in 0 until n) cells.getOrPut(cell(x[i], y[i])) { mutableListOf() } += i
+            cells.forEach { (key, list) ->
+                val cx = (key shr 32).toInt()
+                val cy = key.toInt()
+                for (a in cx - 1..cx + 1) for (b in cy - 1..cy + 1) {
+                    val other = cells[(a.toLong() shl 32) or (b.toLong() and 0xFFFFFFFFL)] ?: continue
+                    for (i in list) for (j in other) if (i < j) push(i, j)
+                }
+            }
         }
         for ((a, b) in graph.edges) {
             val dx = x[b] - x[a]
@@ -201,6 +238,12 @@ class GraphLayout(private val graph: Graph, seed: Int = 7) {
         return moving / n
     }
 
+    private fun cell(px: Float, py: Float): Long {
+        val cx = kotlin.math.floor(px / CELL).toInt()
+        val cy = kotlin.math.floor(py / CELL).toInt()
+        return (cx.toLong() shl 32) or (cy.toLong() and 0xFFFFFFFFL)
+    }
+
     fun nearest(px: Float, py: Float, within: Float): Int? {
         var best = -1
         var bestD = within * within
@@ -209,5 +252,10 @@ class GraphLayout(private val graph: Graph, seed: Int = 7) {
             if (d <= bestD) { best = i; bestD = d }
         }
         return best.takeIf { it >= 0 }
+    }
+
+    private companion object {
+        const val EVERY_PAIR_LIMIT = 800
+        const val CELL = 320f
     }
 }

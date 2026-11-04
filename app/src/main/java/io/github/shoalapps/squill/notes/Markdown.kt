@@ -13,6 +13,8 @@ sealed interface Block {
     data class Code(val language: String, val text: String, override val line: Int) : Block
     data class Table(val header: List<String>, val rows: List<List<String>>, override val line: Int) : Block
     data class Rule(override val line: Int) : Block
+    /** A drawing shown in the note: ![[Name.svg]] on a line of its own. */
+    data class Embed(val target: String, override val line: Int) : Block
 }
 
 /** A run of text with one set of styles. */
@@ -36,6 +38,7 @@ object Markdown {
     private val bullet = Regex("^(\\s*)[-*+]\\s+(.*)$")
     private val numbered = Regex("^(\\s*)(\\d{1,9})[.)]\\s+(.*)$")
     private val rule = Regex("^\\s*([-*_])(\\s*\\1){2,}\\s*$")
+    private val embed = Regex("^\\s*!\\[\\[([^\\]|]+\\.svg)(?:\\|[^\\]]*)?]]\\s*$", RegexOption.IGNORE_CASE)
     private val tableDivider = Regex("^\\s*\\|?\\s*:?-+:?\\s*(\\|\\s*:?-+:?\\s*)*\\|?\\s*$")
 
     fun parse(text: String): List<Block> {
@@ -56,6 +59,7 @@ object Markdown {
                     i++ // The closing fence; an unclosed block runs to the end of the note.
                     blocks += Block.Code(trimmed.drop(3).trim(), body.joinToString("\n"), start)
                 }
+                embed.matches(line) -> blocks += Block.Embed(embed.find(line)!!.groupValues[1].trim(), i++)
                 heading.matches(line) -> {
                     val m = heading.find(line)!!
                     blocks += Block.Heading(m.groupValues[1].length, m.groupValues[2], i++)
@@ -105,7 +109,7 @@ object Markdown {
         if (first) return true
         val trimmed = line.trimStart()
         return !(line.isBlank() || trimmed.startsWith("```") || trimmed.startsWith("~~~") || trimmed.startsWith(">") ||
-            heading.matches(line) || rule.matches(line) || bullet.matches(line) || task.matches(line) || numbered.matches(line))
+            embed.matches(line) || heading.matches(line) || rule.matches(line) || bullet.matches(line) || task.matches(line) || numbered.matches(line))
     }
 
     private fun indentOf(space: String) = space.replace("\t", "    ").length / 2

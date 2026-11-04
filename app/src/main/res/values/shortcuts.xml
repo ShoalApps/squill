@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="shortcut_note">New note</string>
+    <string name="shortcut_list">New checklist</string>
+    <string name="shortcut_draw">New drawing</string>
+    <string name="shortcut_today">Today\'s note</string>
+</resources>

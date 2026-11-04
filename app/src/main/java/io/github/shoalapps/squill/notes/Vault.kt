@@ -8,6 +8,7 @@ import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
 /** A note as it is on disk. [path] is relative to the vault, such as "Ideas/Boats.md". */
+@kotlinx.serialization.Serializable
 data class Note(
     val path: String,
     val body: String,
@@ -48,6 +49,8 @@ object NoteFile {
 
 class VaultException(message: String) : Exception(message)
 
+data class FileStat(val path: String, val modified: Long, val size: Long)
+
 /** Notes as ordinary Markdown files in ordinary folders. Everything goes through here. */
 class Vault(val root: File) {
     private val trash = File(root, TRASH)
@@ -70,6 +73,42 @@ class Vault(val root: File) {
 
     fun read(path: String): Note = read(at(path))
 
+    /** Every note's file details, without reading them, for spotting what's changed. */
+    fun stats(): List<FileStat> = root.walkTopDown().onEnter { !it.name.startsWith(".") || it == root }
+        .filter { it.isFile && (it.extension.equals("md", ignoreCase = true) || it.extension.equals("svg", ignoreCase = true)) }
+        .map { FileStat(relative(it), it.lastModified(), it.length()) }.toList()
+
+    fun exists(path: String) = at(path).exists()
+
+    fun readText(path: String) = at(path).readText()
+
+    fun createSketch(folder: String, name: String, sketch: Sketch = Sketch()): String {
+        at(folder).mkdirs()
+        val file = free(folder, cleanName(name), "svg")
+        writeAtomically(file, sketch.toSvg())
+        return relative(file)
+    }
+
+    fun saveSketch(path: String, sketch: Sketch) = writeAtomically(at(path), sketch.toSvg())
+
+    /** Renames or moves a drawing and updates the notes that show it. */
+    fun moveSketch(path: String, folder: String, name: String): String {
+        val from = at(path)
+        val clean = cleanName(name.removeSuffix(".svg"))
+        at(folder).mkdirs()
+        val newPath = listOf(folder, "$clean.svg").filter { it.isNotEmpty() }.joinToString("/")
+        if (newPath == path) return path
+        val to = if (newPath.equals(path, ignoreCase = true)) at(newPath) else free(folder, clean, "svg")
+        if (!from.renameTo(to)) throw VaultException("Couldn't move that drawing")
+        val oldName = path.substringAfterLast('/')
+        val newName = to.name
+        notes().forEach { note ->
+            val updated = Links.retargetEmbed(note.body, oldName, newName)
+            if (updated != note.body) save(note.path, updated, note.pinned, note.colour)
+        }
+        return relative(to)
+    }
+
     private fun read(file: File): Note {
         val (body, pinned, colour) = NoteFile.read(file.readText())
         return Note(relative(file), body, file.lastModified(), pinned, colour)
@@ -85,11 +124,11 @@ class Vault(val root: File) {
         return clean.take(120)
     }
 
-    private fun free(folder: String, name: String): File {
+    private fun free(folder: String, name: String, extension: String = "md"): File {
         val dir = at(folder)
-        var candidate = File(dir, "$name.md")
+        var candidate = File(dir, "$name.$extension")
         var n = 2
-        while (candidate.exists()) candidate = File(dir, "$name ${n++}.md")
+        while (candidate.exists()) candidate = File(dir, "$name ${n++}.$extension")
         return candidate
     }
 
@@ -189,16 +228,17 @@ class Vault(val root: File) {
     private fun freeInTrash(path: String): File {
         var candidate = File(trash, path)
         var n = 2
-        val stem = path.removeSuffix(".md")
-        while (candidate.exists()) candidate = File(trash, "$stem ${n++}.md")
+        val extension = path.substringAfterLast('.')
+        val stem = path.removeSuffix(".$extension")
+        while (candidate.exists()) candidate = File(trash, "$stem ${n++}.$extension")
         return candidate
     }
 
     /** What's in the trash, by the path it would go back to. */
     fun trashed(): List<Note> = if (!trash.exists()) emptyList() else trash.walkTopDown()
-        .filter { it.isFile && it.extension.equals("md", ignoreCase = true) && !it.name.startsWith(".") }
+        .filter { it.isFile && (it.extension.equals("md", ignoreCase = true) || it.extension.equals("svg", ignoreCase = true)) && !it.name.startsWith(".") }
         .map { file ->
-            val (body, pinned, colour) = NoteFile.read(file.readText())
+            val (body, pinned, colour) = if (file.extension.equals("svg", ignoreCase = true)) Triple("", false, null) else NoteFile.read(file.readText())
             Note(file.relativeTo(trash).invariantSeparatorsPath, body, file.lastModified(), pinned, colour)
         }.sortedByDescending { it.modified }.toList()
 
@@ -206,9 +246,10 @@ class Vault(val root: File) {
         val from = File(trash, path)
         val folder = path.substringBeforeLast('/', "")
         at(folder).mkdirs()
-        val to = free(folder, path.substringAfterLast('/').removeSuffix(".md"))
+        val extension = path.substringAfterLast('.')
+        val to = free(folder, path.substringAfterLast('/').removeSuffix(".$extension"), extension)
         if (!from.renameTo(to)) throw VaultException("Couldn't restore that note")
-        return read(to)
+        return if (extension == "md") read(to) else Note(relative(to), "", to.lastModified())
     }
 
     fun deleteForever(path: String) {
@@ -252,11 +293,14 @@ class Vault(val root: File) {
         val parts = path.replace('\\', '/').split('/').filter { it.isNotEmpty() && it != "." }
         if (parts.isEmpty() || parts.any { it == ".." || it.startsWith(".") }) return 0
         val file = parts.last()
-        if (!file.endsWith(".md", ignoreCase = true)) return 0
+        val isNote = file.endsWith(".md", ignoreCase = true)
+        if (!isNote && !file.endsWith(".svg", ignoreCase = true)) return 0
+        val text = input.readBytes().toString(Charsets.UTF_8)
+        if (!isNote && Sketch.parse(text) == null) return 0 // Only Squill's own drawings.
         val folder = parts.dropLast(1).joinToString("/") { cleanName(it) }
         at(folder).mkdirs()
-        val target = free(folder, cleanName(file.dropLast(3)))
-        writeAtomically(target, input.readBytes().toString(Charsets.UTF_8))
+        val target = free(folder, cleanName(file.dropLast(if (isNote) 3 else 4)), if (isNote) "md" else "svg")
+        writeAtomically(target, text)
         return 1
     }
 

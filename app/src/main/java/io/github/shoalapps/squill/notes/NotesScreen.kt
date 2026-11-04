@@ -113,6 +113,13 @@ fun NotesScreen(
         }
     }.sortedWith(compareBy({ !it.note.pinned }, { -it.note.modified }))
     val subfolders = if (filtering) emptyList() else library.folders.filter { it.substringBeforeLast('/', "") == folder }
+    val drawings = library.sketches.filter { s ->
+        when {
+            query.isNotBlank() -> s.title.contains(query, ignoreCase = true)
+            tag != null -> false
+            else -> s.folder == folder
+        }
+    }.sortedByDescending { it.modified }
     val pinned = shown.filter { it.note.pinned }
     val others = shown.filterNot { it.note.pinned }
 
@@ -155,6 +162,9 @@ fun NotesScreen(
         },
         floatingActionButton = {
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                SmallFloatingActionButton(onClick = { vm.createSketch(folder, "Drawing") { onOpen(it) } }) {
+                    Icon(painterResource(R.drawable.ic_brush), contentDescription = "New drawing")
+                }
                 SmallFloatingActionButton(onClick = { vm.create(folder, "Checklist", "- [ ] ") { onOpen(it.path) } }) {
                     Icon(painterResource(R.drawable.ic_checklist), contentDescription = "New checklist")
                 }
@@ -208,7 +218,25 @@ fun NotesScreen(
             items(others, key = { it.note.path }) { info ->
                 NoteCard(info, info.note.path == openPath, cardMenu == info.note.path, filtering, onOpen, { cardMenu = it }, vm, onBeforeChange) { ask = it }
             }
-            if (shown.isEmpty() && subfolders.isEmpty()) item(span = StaggeredGridItemSpan.FullLine, key = "empty") {
+            if (drawings.isNotEmpty()) {
+                item(span = StaggeredGridItemSpan.FullLine, key = "drawings") { Label("Drawings") }
+                items(drawings, key = { it.path }) { d ->
+                    Box {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                            border = if (d.path == openPath) androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
+                            modifier = Modifier.fillMaxWidth().combinedClickable(onClick = { onOpen(d.path) }, onLongClick = { cardMenu = d.path }),
+                        ) {
+                            SketchPicture(d.sketch, Modifier.fillMaxWidth().height(120.dp))
+                            Text(d.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(10.dp))
+                        }
+                        DropdownMenu(cardMenu == d.path, { cardMenu = null }) {
+                            DropdownMenuItem({ Text("Delete") }, onClick = { cardMenu = null; onBeforeChange(d.path); vm.trash(d.path) })
+                        }
+                    }
+                }
+            }
+            if (shown.isEmpty() && subfolders.isEmpty() && drawings.isEmpty()) item(span = StaggeredGridItemSpan.FullLine, key = "empty") {
                 Column(Modifier.fillMaxWidth().padding(vertical = 64.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(painterResource(R.drawable.ic_launcher_mono), null, Modifier.size(120.dp), tint = MaterialTheme.colorScheme.primary)
                     Text(if (filtering) "Nothing found" else "Nothing inked here yet", style = MaterialTheme.typography.titleLarge)

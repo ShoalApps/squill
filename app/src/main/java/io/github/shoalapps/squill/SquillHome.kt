@@ -35,6 +35,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
+import io.github.shoalapps.squill.notes.DrawingScreen
 import io.github.shoalapps.squill.notes.GraphScreen
 import io.github.shoalapps.squill.notes.NoteEditor
 import io.github.shoalapps.squill.notes.NotesScreen
@@ -65,6 +66,20 @@ fun SquillHome(reminders: RemindersViewModel, notes: NotesViewModel) {
             val title = text.trim().lineSequence().first().take(60).ifBlank { "Shared note" }
             notes.create(folder, title, text.trim()) { openPath = it.path }
             notes.clearShared()
+        }
+    }
+    val quick by notes.quick.collectAsState()
+    LaunchedEffect(quick) {
+        quick?.let { action ->
+            settings = false; trash = false; tab = Tab.NOTES
+            val open = { path: String -> openPath = path }
+            when (action) {
+                MainActivity.ACTION_NEW_NOTE -> notes.create("", "Untitled") { open(it.path) }
+                MainActivity.ACTION_NEW_LIST -> notes.create("", "Checklist", "- [ ] ") { open(it.path) }
+                MainActivity.ACTION_NEW_DRAWING -> notes.createSketch("", "Drawing") { open(it) }
+                MainActivity.ACTION_TODAY -> notes.today { open(it.path) }
+            }
+            notes.clearQuick()
         }
     }
     if (settings) {
@@ -119,7 +134,11 @@ fun SquillHome(reminders: RemindersViewModel, notes: NotesViewModel) {
                         val editor: @Composable (Modifier, String) -> Unit = { m, path ->
                             androidx.compose.foundation.layout.Box(m) {
                                 androidx.compose.runtime.key(path) {
-                                    NoteEditor(
+                                    if (path.endsWith(".svg")) DrawingScreen(
+                                        path, library, notes,
+                                        onClose = { openPath = null },
+                                        onPathChanged = { openPath = it },
+                                    ) else NoteEditor(
                                         path, library, notes,
                                         onClose = if (twoPanes) null else ({ openPath = null }),
                                         onPathChanged = { openPath = it.ifEmpty { null } },
@@ -129,6 +148,7 @@ fun SquillHome(reminders: RemindersViewModel, notes: NotesViewModel) {
                                         onRemind = { reminders.jot(it) },
                                         onGraph = { graphFocus = it; tab = Tab.GRAPH },
                                         onFlushReady = { flushEditor = it },
+                                        onOpenSketch = { openPath = it },
                                     )
                                 }
                             }

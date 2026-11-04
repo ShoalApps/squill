@@ -12,6 +12,15 @@ Notes, links and reminders, as ordinary files on your phone. A Material You note
 - A note for today, a trash you can restore from, and two panes on a tablet
 - Import a folder of Markdown files, such as an Obsidian vault, keeping its subfolders
 - Share text from any app to make a note of it
+- Opens fast however many notes you have: 10,000 notes open in under half a second once indexed, on the test device
+- Long-press the icon to jump straight to a new note, checklist, drawing or today's note
+
+## Drawing
+
+- Low-latency ink with pen, marker and highlighter, with pressure where the pen has it
+- Palm rejection: once a pen has been used, fingers move around instead of drawing. A pen's eraser end and barrel button erase
+- Lines, arrows, boxes, circles and text. Select, move, duplicate and delete. Undo and redo. Plain, lined, grid and dotted paper
+- Drawings are ordinary SVG pictures you can open anywhere, can sit inside a note, and save as PNG
 
 ## Reminders
 

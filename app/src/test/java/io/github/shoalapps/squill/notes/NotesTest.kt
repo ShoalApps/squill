@@ -331,3 +331,106 @@ class ListEnterTest {
         assertNull(Formatting.continueList("-not a list", 11))
     }
 }
+
+class SketchTest {
+    @get:Rule val dir = TemporaryFolder()
+    private val vault by lazy { Vault(dir.newFolder("vault")) }
+    private val red = 0xFF0000
+
+    @Test fun drawingsRoundTripThroughSvg() {
+        val s = Sketch(
+            paper = Sketch.GRID,
+            strokes = listOf(SketchStroke(Sketch.PEN, red, 6f, listOf(1f, 2f, 0f, .5f, 30f, 40f, 8f, .9f)), Sketch.line(0f, 0f, 50f, 50f, red, 4f)),
+            texts = listOf(SketchText(10f, 20f, "a < b & \"c\"", red)),
+        )
+        val svg = s.toSvg()
+        assertTrue(svg.startsWith("<svg "))
+        assertEquals(s, Sketch.parse(svg))
+        assertTrue("a < b" !in svg.substringAfter("</metadata>"))
+    }
+
+    @Test fun otherPicturesAreNotDrawings() {
+        assertNull(Sketch.parse("<svg><rect/></svg>"))
+        assertNull(Sketch.parse("<svg><metadata id=\"squill-sketch\">not json</metadata></svg>"))
+    }
+
+    @Test fun anEmptyDrawingStillMakesAPicture() {
+        assertEquals(Sketch(), Sketch.parse(Sketch().toSvg()))
+        assertEquals(Sketch(strokes = listOf(SketchStroke(Sketch.PEN, red, 6f, listOf(5f, 5f, 0f, -1f)))).strokes.size, 1)
+        assertTrue(Sketch(strokes = listOf(SketchStroke(Sketch.PEN, red, 6f, listOf(5f, 5f, 0f, -1f)))).toSvg().contains("<path"))
+    }
+
+    @Test fun theEraserFindsStrokes() {
+        val s = Sketch.line(0f, 0f, 100f, 0f, red, 4f)
+        assertTrue(s.touches(50f, 3f, 2f))
+        assertFalse(s.touches(50f, 30f, 2f))
+        assertTrue(s.inside(-1f, -1f, 101f, 1f))
+        assertFalse(s.inside(10f, -1f, 101f, 1f))
+        assertEquals(10f, s.moved(10f, 0f).x(0))
+    }
+
+    @Test fun shapesAreStrokes() {
+        assertEquals(3, Sketch.arrow(0f, 0f, 100f, 0f, red, 4f).size)
+        val box = Sketch.rectangle(0f, 0f, 10f, 10f, red, 2f)
+        assertEquals(box.x(0), box.x(box.count - 1))
+        val round = Sketch.ellipse(0f, 0f, 20f, 10f, red, 2f)
+        assertEquals(20f, round.x(0), .01f)
+    }
+
+    @Test fun drawingsMoveAndTheirEmbedsFollow() {
+        val path = vault.createSketch("", "Boat")
+        assertEquals("Boat.svg", path)
+        vault.create("", "Note", "before\n![[Boat.svg]]\nafter ![[Boat.svg|small]]")
+        val moved = vault.moveSketch(path, "Pics", "Ship")
+        assertEquals("Pics/Ship.svg", moved)
+        assertEquals("before\n![[Ship.svg]]\nafter ![[Ship.svg|small]]", vault.read("Note.md").body)
+    }
+
+    @Test fun drawingsGoThroughTrashAndBackups() {
+        val path = vault.createSketch("Pics", "Boat", Sketch(texts = listOf(SketchText(1f, 1f, "hi", red))))
+        assertEquals(listOf(FileStat(path, 0, 0).path), vault.stats().map { it.path })
+        vault.trash(path)
+        assertEquals(listOf(path), vault.trashed().map { it.path })
+        vault.restore(path)
+        assertEquals("hi", Sketch.parse(vault.readText(path))!!.texts.single().text)
+        val zip = ByteArrayOutputStream().also { vault.export(it) }.toByteArray()
+        assertEquals(1, vault.importZip(ByteArrayInputStream(zip)))
+        assertTrue(vault.exists("Pics/Boat 2.svg"))
+    }
+
+    @Test fun foreignSvgsAreNotImported() {
+        assertEquals(0, vault.importFile("logo.svg", ByteArrayInputStream("<svg/>".toByteArray())))
+    }
+
+    @Test fun anEmbedIsItsOwnBlock() {
+        assertEquals(
+            listOf(Block.Paragraph("Text", 0), Block.Embed("Boat.svg", 1), Block.Paragraph("More ![[x.svg]] inline", 2)),
+            Markdown.parse("Text\n![[Boat.svg]]\nMore ![[x.svg]] inline"),
+        )
+    }
+}
+
+class ScaleTest {
+    @get:Rule val dir = TemporaryFolder()
+
+    /** The size where Obsidian users report waiting about 20 seconds on Android. */
+    @Test fun tenThousandNotesStayFast() {
+        val vault = Vault(dir.newFolder("big"))
+        repeat(10_000) { i ->
+            File(vault.root, "n$i.md").writeText("# Note $i\nSee [[n${(i * 7) % 10_000}]] and [[n${(i * 13) % 10_000}]] #tag${i % 40}\n- [ ] task\n")
+        }
+        val stats = kotlin.system.measureTimeMillis { assertEquals(10_000, vault.stats().size) }
+        val notes = vault.notes()
+        val infos = notes.map { NoteInfo(it, Links.scan(it.body).first, Links.scan(it.body).second, "", 0, 0) }
+        val library = Library(infos)
+        val lookups = kotlin.system.measureTimeMillis { repeat(1000) { library.backlinks("n$it.md") } }
+        val graph = library.graph(true)
+        assertEquals(10_000, graph.nodes.size)
+        val layout = GraphLayout(graph)
+        val step = kotlin.system.measureTimeMillis { layout.step() }
+        println("10k notes: stat ${stats}ms, 1000 backlinks ${lookups}ms, graph step ${step}ms")
+        assertTrue("checking files took ${stats}ms", stats < 3000)
+        assertTrue("backlinks took ${lookups}ms", lookups < 2000)
+        assertTrue("a graph step took ${step}ms", step < 3000)
+    }
+}
