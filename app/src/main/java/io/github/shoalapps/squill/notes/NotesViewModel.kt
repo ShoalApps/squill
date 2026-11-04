@@ -30,12 +30,19 @@ data class DeckInfo(val path: String, val modified: Long, val size: Long, val de
     val folder: String get() = path.substringBeforeLast('/', "")
 }
 
+/** A layered painting, with the small picture stored inside its file. */
+class PaintingInfo(val path: String, val modified: Long, val size: Long, val thumbnail: ByteArray?) {
+    val title: String get() = path.substringAfterLast('/').removeSuffix(".ora")
+    val folder: String get() = path.substringBeforeLast('/', "")
+}
+
 data class Library(
     val notes: List<NoteInfo> = emptyList(),
     val folders: List<String> = emptyList(),
     val trash: List<Note> = emptyList(),
     val sketches: List<SketchInfo> = emptyList(),
     val decks: List<DeckInfo> = emptyList(),
+    val paintings: List<PaintingInfo> = emptyList(),
 ) {
     val paths: List<String> get() = notes.map { it.note.path }
     val tags: List<String> by lazy { notes.flatMap { it.tags }.distinct().sortedBy { it.lowercase() } }
@@ -93,6 +100,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     private var known = HashMap<String, NoteInfo>()
     private var knownSketches = HashMap<String, SketchInfo>()
     private var knownDecks = HashMap<String, DeckInfo>()
+    private var knownPaintings = HashMap<String, PaintingInfo>()
     private var indexWrite: kotlinx.coroutines.Job? = null
 
     init {
@@ -125,7 +133,14 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         val seenSketches = HashMap<String, SketchInfo>()
         var changed = false
         val seenDecks = HashMap<String, DeckInfo>()
+        val seenPaintings = HashMap<String, PaintingInfo>()
         stats.forEach { stat ->
+            if (stat.path.endsWith(".ora", ignoreCase = true)) {
+                val old = knownPaintings[stat.path]
+                seenPaintings[stat.path] = if (old != null && old.modified == stat.modified && old.size == stat.size) old
+                else PaintingInfo(stat.path, stat.modified, stat.size, io.github.shoalapps.squill.paint.OraFile.thumbnail(vault.file(stat.path)))
+                return@forEach
+            }
             if (stat.path.endsWith(".deck", ignoreCase = true)) {
                 val old = knownDecks[stat.path]
                 if (old != null && old.modified == stat.modified && old.size == stat.size) seenDecks[stat.path] = old
@@ -153,7 +168,8 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         known = seen
         knownSketches = seenSketches
         knownDecks = seenDecks
-        _library.value = Library(seen.values.toList(), vault.folders(), vault.trashed(), seenSketches.values.toList(), seenDecks.values.toList())
+        knownPaintings = seenPaintings
+        _library.value = Library(seen.values.toList(), vault.folders(), vault.trashed(), seenSketches.values.toList(), seenDecks.values.toList(), seenPaintings.values.toList())
         if (changed) writeIndexSoon()
     }
 
@@ -226,6 +242,18 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun createPainting(folder: String, name: String, width: Int = 2048, height: Int = 1536, onDone: (String) -> Unit) = act(onDone) {
+        val blank = io.github.shoalapps.squill.paint.Painting.blank(width, height)
+        vault.createFile(folder, name, "ora") { out -> io.github.shoalapps.squill.paint.OraFile.save(blank.run { io.github.shoalapps.squill.paint.PaintingCopy(width, height, layers) }, out) }
+    }
+
+    /** Paintings save in the background, in order, from a copy taken when they were asked for. */
+    fun savePainting(path: String, copy: io.github.shoalapps.squill.paint.PaintingCopy) = act<Unit> {
+        if (vault.exists(path)) vault.writeFile(path) { io.github.shoalapps.squill.paint.OraFile.save(copy, it) }
+    }
+
+    fun moveFile(path: String, folder: String, name: String, onDone: (String) -> Unit = {}) = act(onDone) { vault.moveFile(path, folder, name) }
+
     fun createDeck(folder: String, name: String, deck: Deck = Deck(), onDone: (String) -> Unit) = act(onDone) { vault.createDeck(folder, name, deck) }
     fun saveDeck(path: String, deck: Deck) = act<Unit> { if (vault.exists(path)) vault.saveDeck(path, deck) }
     fun saveDeckNow(path: String, deck: Deck) {
@@ -257,9 +285,18 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
                 val stem = name.substringBeforeLast('.').ifBlank { "Imported" }
                 val open = { context.contentResolver.openInputStream(uri) ?: throw OfficeException("That file couldn't be opened") }
                 when {
+                    name.endsWith(".ora", ignoreCase = true) -> {
+                        val bytes = open().use { it.readBytes() }
+                        io.github.shoalapps.squill.paint.OraFile.load(bytes)
+                        vault.createFile(folder, stem, "ora") { it.write(bytes) }
+                    }
+                    name.endsWith(".kra", ignoreCase = true) || listOf(".png", ".jpg", ".jpeg", ".webp").any { name.endsWith(it, ignoreCase = true) } -> {
+                        val painting = io.github.shoalapps.squill.paint.OraFile.fromPicture(open().use { it.readBytes() })
+                        vault.createFile(folder, stem, "ora") { io.github.shoalapps.squill.paint.OraFile.save(painting.run { io.github.shoalapps.squill.paint.PaintingCopy(width, height, layers) }, it) }
+                    }
                     name.endsWith(".pptx", ignoreCase = true) -> vault.createDeck(folder, stem, open().use { Pptx.import(it) })
                     name.endsWith(".docx", ignoreCase = true) -> vault.create(folder, stem, open().use { Docx.import(it) }).path
-                    else -> throw OfficeException("Squill can open .docx and .pptx files")
+                    else -> throw OfficeException("Squill can open .docx, .pptx, .ora, .kra and picture files")
                 }
             }
             runCatching { reload() }

@@ -135,7 +135,11 @@ fun SquillHome(reminders: RemindersViewModel, notes: NotesViewModel) {
                         val editor: @Composable (Modifier, String) -> Unit = { m, path ->
                             androidx.compose.foundation.layout.Box(m) {
                                 androidx.compose.runtime.key(path) {
-                                    if (path.endsWith(".deck")) DeckScreen(
+                                    if (path.endsWith(".ora")) io.github.shoalapps.squill.paint.PaintScreen(
+                                        path, notes,
+                                        onClose = { openPath = null },
+                                        onPathChanged = { openPath = it },
+                                    ) else if (path.endsWith(".deck")) DeckScreen(
                                         path, library, notes,
                                         onClose = { openPath = null },
                                         onPathChanged = { openPath = it },

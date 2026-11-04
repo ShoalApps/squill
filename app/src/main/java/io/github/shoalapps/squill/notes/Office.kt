@@ -46,7 +46,7 @@ internal fun writeZip(output: OutputStream, files: Map<String, ByteArray>) {
     }
 }
 
-internal fun esc(s: String) = buildString(s.length) {
+fun esc(s: String) = buildString(s.length) {
     s.forEach { c ->
         when {
             c == '&' -> append("&amp;")
@@ -60,7 +60,7 @@ internal fun esc(s: String) = buildString(s.length) {
     }
 }
 
-internal fun parser(bytes: ByteArray): XmlPullParser = XmlPullParserFactory.newInstance().apply { isNamespaceAware = false }.newPullParser().also {
+fun parser(bytes: ByteArray): XmlPullParser = XmlPullParserFactory.newInstance().apply { isNamespaceAware = false }.newPullParser().also {
     // DOCTYPEs aren't processed by this parser, so a file can't pull in outside entities.
     it.setInput(StringReader(bytes.toString(Charsets.UTF_8)))
 }

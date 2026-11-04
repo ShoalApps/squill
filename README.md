@@ -22,6 +22,19 @@ Notes, links and reminders, as ordinary files on your phone. A Material You note
 - Lines, arrows, boxes, circles and text. Select, move, duplicate and delete. Undo and redo. Plain, lined, grid and dotted paper
 - Drawings are ordinary SVG pictures you can open anywhere, can sit inside a note, and save as PNG
 
+## Painting
+
+A layered painting studio with Simple, Advanced and Focus modes, inspired by Krita.
+
+- Layers with 26 blend modes, opacity, transparency lock and clipping, merged, duplicated and reordered as you like
+- A stamp brush engine with 19 presets, from ink and pencil to watercolour, smudge and blur, and controls for flow, hardness, spacing, scatter, jitter, nib shape and stabilising, with pressure and tilt
+- Selections by box, oval, lasso and magic wand, which limit painting, fills and filters
+- Fill, gradients, shapes, text, transform, crop, and left-right, up-down and radial symmetry
+- 17 filters, a colour picker with palette and recent colours, and a view you can pan, pinch and turn
+- Saves as OpenRaster (.ora), the open layered format Krita can open, and as PNG and JPEG. Opens pictures, and a Krita file's flattened image
+
+Not everything in Krita is here: there are no layer groups, filter masks, vector layers, animation timeline, perspective assistants, CMYK or high bit-depth colour, or plugins.
+
 ## Documents and slides
 
 - Save any note as Word (.docx) or PDF, and open Word files as notes

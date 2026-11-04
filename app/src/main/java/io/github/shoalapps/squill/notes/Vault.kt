@@ -47,6 +47,8 @@ object NoteFile {
     }
 }
 
+private fun looksLikeOra(bytes: ByteArray) = runCatching { "stack.xml" in readZip(java.io.ByteArrayInputStream(bytes)) }.getOrDefault(false)
+
 class VaultException(message: String) : Exception(message)
 
 data class FileStat(val path: String, val modified: Long, val size: Long)
@@ -90,6 +92,41 @@ class Vault(val root: File) {
     }
 
     fun saveSketch(path: String, sketch: Sketch) = writeAtomically(at(path), sketch.toSvg())
+
+    fun readBytes(path: String) = at(path).readBytes()
+
+    /** Writes through [write] to a temporary file first, so a failed save can't damage what's there. */
+    fun writeFile(path: String, write: (java.io.OutputStream) -> Unit) {
+        val file = at(path)
+        val tmp = File(file.parentFile, ".${file.name}.tmp")
+        tmp.outputStream().buffered().use(write)
+        if (!tmp.renameTo(file)) {
+            file.delete()
+            if (!tmp.renameTo(file)) { tmp.delete(); throw VaultException("Couldn't save that file") }
+        }
+    }
+
+    fun createFile(folder: String, name: String, extension: String, write: (java.io.OutputStream) -> Unit): String {
+        at(folder).mkdirs()
+        val path = relative(free(folder, cleanName(name), extension))
+        writeFile(path, write)
+        return path
+    }
+
+    /** Renames or moves any file that nothing links to by name. */
+    fun moveFile(path: String, folder: String, name: String): String {
+        val from = at(path)
+        val extension = path.substringAfterLast('.')
+        val clean = cleanName(name.removeSuffix(".$extension"))
+        at(folder).mkdirs()
+        val newPath = listOf(folder, "$clean.$extension").filter { it.isNotEmpty() }.joinToString("/")
+        if (newPath == path) return path
+        val to = if (newPath.equals(path, ignoreCase = true)) at(newPath) else free(folder, clean, extension)
+        if (!from.renameTo(to)) throw VaultException("Couldn't move that file")
+        return relative(to)
+    }
+
+    fun file(path: String): File = at(path)
 
     fun createDeck(folder: String, name: String, deck: Deck = Deck()): String {
         at(folder).mkdirs()
@@ -315,19 +352,20 @@ class Vault(val root: File) {
         val file = parts.last()
         val extension = file.substringAfterLast('.', "").lowercase()
         if (extension !in KINDS) return 0
-        val text = input.readBytes().toString(Charsets.UTF_8)
-        // Only Squill's own drawings and presentations, not just any file with that ending.
-        if (extension == "svg" && Sketch.parse(text) == null) return 0
-        if (extension == "deck" && Deck.parse(text) == null) return 0
+        val bytes = input.readBytes()
+        // Only Squill's own drawings and presentations, and real OpenRaster, not just any file with that ending.
+        if (extension == "svg" && Sketch.parse(bytes.toString(Charsets.UTF_8)) == null) return 0
+        if (extension == "deck" && Deck.parse(bytes.toString(Charsets.UTF_8)) == null) return 0
+        if (extension == "ora" && !looksLikeOra(bytes)) return 0
         val folder = parts.dropLast(1).joinToString("/") { cleanName(it) }
         at(folder).mkdirs()
         val target = free(folder, cleanName(file.dropLast(extension.length + 1)), extension)
-        writeAtomically(target, text)
+        writeFile(relative(target)) { it.write(bytes) }
         return 1
     }
 
     companion object {
         const val TRASH = ".trash"
-        val KINDS = setOf("md", "svg", "deck")
+        val KINDS = setOf("md", "svg", "deck", "ora")
     }
 }

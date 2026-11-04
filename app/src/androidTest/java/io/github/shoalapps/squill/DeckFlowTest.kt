@@ -54,7 +54,7 @@ class DeckFlowTest {
     private fun saved(path: String = "Presentation.deck") = Deck.parse(File(root, path).readText())
     private fun waitFor(check: () -> Boolean) = rule.waitUntil(8000, check)
     private fun open() {
-        rule.onNodeWithContentDescription("New checklist, drawing or presentation").performClick()
+        rule.onNodeWithContentDescription("New checklist, drawing, painting or presentation").performClick()
         rule.onNodeWithText("New presentation").performClick()
         rule.waitUntilExactlyOneExists(hasContentDescription("Slide 1 of 1", substring = true), 8000)
     }

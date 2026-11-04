@@ -49,7 +49,7 @@ class DrawingFlowTest {
     private fun waitFor(check: () -> Boolean) = rule.waitUntil(8000, check)
     private fun saved(path: String = "Drawing.svg") = Sketch.parse(File(root, path).readText())
     private fun open() {
-        rule.onNodeWithContentDescription("New checklist, drawing or presentation").performClick()
+        rule.onNodeWithContentDescription("New checklist, drawing, painting or presentation").performClick()
         rule.onNodeWithText("New drawing").performClick()
         rule.waitUntilExactlyOneExists(hasContentDescription("Drawing canvas with 0 strokes"), 8000)
     }
