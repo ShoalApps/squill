@@ -27,6 +27,8 @@ class ScreenTest {
         Store.load(context).forEach { Scheduler.cancel(context, it.id) }
         Store.save(context, emptyList())
         rule.waitForIdle()
+        rule.onNodeWithText("Reminders").performClick()
+        rule.waitForIdle()
     }
 
     private fun seed(vararg reminders: Reminder) {

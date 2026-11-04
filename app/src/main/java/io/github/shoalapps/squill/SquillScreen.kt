@@ -54,7 +54,6 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -82,19 +81,13 @@ private fun whenText(context: android.content.Context, millis: Long): String {
 }
 
 @Composable
-fun SquillScreen(vm: RemindersViewModel) {
+fun SquillScreen(vm: RemindersViewModel, onSettings: () -> Unit) {
     val items by vm.items.collectAsState()
     val notificationsOn by vm.notificationsOn.collectAsState()
     var editingId by rememberSaveable { mutableStateOf<Long?>(null) }
     val jot by vm.jot.collectAsState()
-    var settings by rememberSaveable { mutableStateOf(false) }
     val snackbars = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(jot) { if (jot != null) settings = false }
-    if (settings) {
-        SettingsScreen(onBack = { settings = false })
-        return
-    }
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     // A repeating reminder is shown at its next ring, not the day it was first set.
     val now = System.currentTimeMillis()
@@ -115,9 +108,9 @@ fun SquillScreen(vm: RemindersViewModel) {
         modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
         topBar = {
             LargeTopAppBar(
-                title = { Text("Squill") },
+                title = { Text("Reminders") },
                 actions = {
-                    IconButton(onClick = { settings = true }) { Icon(Icons.Default.SettingsIcon, contentDescription = "Settings") }
+                    IconButton(onClick = onSettings) { Icon(Icons.Default.SettingsIcon, contentDescription = "Settings") }
                 },
                 scrollBehavior = scroll,
             )

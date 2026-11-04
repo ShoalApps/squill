@@ -1,0 +1,213 @@
+package io.github.shoalapps.squill.notes
+
+/** What links to what, worked out from the text of the notes. */
+object Links {
+    /** The note names a text links to, and its tags. Code doesn't count. */
+    fun scan(text: String): Pair<List<String>, List<String>> {
+        val links = mutableListOf<String>()
+        val tags = mutableListOf<String>()
+        fun read(line: String) {
+            Markdown.inlines(line).forEach { run ->
+                run.note?.let { links += it }
+                run.tag?.let { tags += it }
+            }
+        }
+        Markdown.parse(text).forEach { b ->
+            when (b) {
+                is Block.Heading -> read(b.text)
+                is Block.Paragraph -> read(b.text)
+                is Block.Bullet -> read(b.text)
+                is Block.Numbered -> read(b.text)
+                is Block.Task -> read(b.text)
+                is Block.Quote -> read(b.text)
+                is Block.Table -> (b.header + b.rows.flatten()).forEach(::read)
+                is Block.Code, is Block.Rule -> Unit
+            }
+        }
+        return links.distinct() to tags.distinct()
+    }
+
+    /** Takes off a #heading and any .md, so that a link's target can be matched against note names. */
+    private fun clean(target: String) = target.substringBefore('#').trim().removeSuffix(".md").trim('/')
+
+    /**
+     * The note a link means, by [paths] without their .md. A full path wins; otherwise the name
+     * alone, and if two folders both have that name, the one nearest the top (as in Obsidian).
+     */
+    fun resolve(target: String, paths: Collection<String>): String? {
+        val wanted = clean(target)
+        if (wanted.isEmpty()) return null
+        paths.firstOrNull { it.equals("$wanted.md", ignoreCase = true) }?.let { return it }
+        val name = wanted.substringAfterLast('/')
+        return paths.filter { it.substringAfterLast('/').removeSuffix(".md").equals(name, ignoreCase = true) }
+            .filter { "/" !in wanted || it.removeSuffix(".md").endsWith("/$wanted", ignoreCase = true) }
+            .minWithOrNull(compareBy({ it.count { c -> c == '/' } }, { it }))
+    }
+
+    /** Points links in [text] at a note's new name, leaving code, headings and aliases alone. */
+    fun retarget(text: String, oldPath: String, newPath: String, paths: Collection<String>): String {
+        val oldName = oldPath.removeSuffix(".md")
+        val newName = newPath.removeSuffix(".md")
+        val code = codeRanges(text)
+        return wikiLink.replace(text) { m ->
+            val at = m.range.first
+            if (code.any { at in it }) return@replace m.value
+            val target = m.groupValues[1]
+            if (resolve(target, paths) != oldPath) return@replace m.value
+            // Keep the style it was written in: a bare name stays a bare name if that still works.
+            val written = clean(target)
+            val replacement = if ("/" in written) newName else newName.substringAfterLast('/')
+            val heading = target.substringAfter('#', "").let { if (it.isEmpty()) "" else "#$it" }
+            "[[$replacement$heading${m.groupValues[2]}]]"
+        }
+    }
+
+    private val wikiLink = Regex("\\[\\[([^\\]|\\n]+)(\\|[^\\]\\n]*)?]]")
+
+    /** Where the fenced code blocks and `inline code` are. */
+    private fun codeRanges(text: String): List<IntRange> {
+        val ranges = mutableListOf<IntRange>()
+        var pos = 0
+        var fence: String? = null
+        var fenceStart = 0
+        text.split('\n').forEach { line ->
+            val t = line.trimStart()
+            if (fence == null && (t.startsWith("```") || t.startsWith("~~~"))) {
+                fence = t.take(3); fenceStart = pos
+            } else if (fence != null && t.startsWith(fence!!)) {
+                ranges += fenceStart..(pos + line.length); fence = null
+            } else if (fence == null) {
+                var i = line.indexOf('`')
+                while (i >= 0) {
+                    val end = line.indexOf('`', i + 1)
+                    if (end < 0) break
+                    ranges += (pos + i)..(pos + end)
+                    i = line.indexOf('`', end + 1)
+                }
+            }
+            pos += line.length + 1
+        }
+        if (fence != null) ranges += fenceStart..text.length
+        return ranges
+    }
+}
+
+/** The notes and how they join up. A node with no [path] is a note that's linked to but not written yet. */
+data class GraphNode(val id: String, val title: String, val path: String?, val links: Int)
+data class Graph(val nodes: List<GraphNode>, val edges: List<Pair<Int, Int>>) {
+    companion object {
+        /** [notes] maps each note's path to the targets it links to. */
+        fun of(notes: Map<String, List<String>>, showUnwritten: Boolean = true): Graph {
+            val paths = notes.keys
+            val pairs = linkedSetOf<Pair<String, String>>()
+            val unwritten = linkedMapOf<String, String>()
+            notes.forEach { (from, targets) ->
+                targets.forEach { target ->
+                    val to = Links.resolve(target, paths)
+                    when {
+                        to == from -> Unit
+                        to != null -> pairs += ordered(from, to)
+                        showUnwritten -> {
+                            val name = target.substringBefore('#').trim().removeSuffix(".md")
+                            if (name.isNotEmpty()) {
+                                val id = "unwritten:${name.lowercase()}"
+                                unwritten.putIfAbsent(id, name)
+                                pairs += ordered(from, id)
+                            }
+                        }
+                    }
+                }
+            }
+            val count = HashMap<String, Int>()
+            pairs.forEach { (a, b) ->
+                count[a] = (count[a] ?: 0) + 1
+                count[b] = (count[b] ?: 0) + 1
+            }
+            val nodes = paths.sorted().map { GraphNode(it, it.substringAfterLast('/').removeSuffix(".md"), it, count[it] ?: 0) } +
+                unwritten.map { (id, name) -> GraphNode(id, name.substringAfterLast('/'), null, count[id] ?: 0) }
+            val index = nodes.withIndex().associate { (i, n) -> n.id to i }
+            return Graph(nodes, pairs.map { (a, b) -> index.getValue(a) to index.getValue(b) })
+        }
+
+        private fun ordered(a: String, b: String) = if (a < b) a to b else b to a
+    }
+
+    /** Just [path] and whatever's within [depth] links of it. */
+    fun around(path: String, depth: Int = 1): Graph {
+        val start = nodes.indexOfFirst { it.path == path }
+        if (start < 0) return Graph(emptyList(), emptyList())
+        val keep = linkedSetOf(start)
+        repeat(depth) {
+            val found = edges.filter { (a, b) -> a in keep || b in keep }.flatMap { (a, b) -> listOf(a, b) }
+            keep += found
+        }
+        val order = keep.toList()
+        val map = order.withIndex().associate { (new, old) -> old to new }
+        return Graph(order.map { nodes[it] }, edges.filter { (a, b) -> a in keep && b in keep }.map { (a, b) -> map.getValue(a) to map.getValue(b) })
+    }
+}
+
+/** A simple force-directed layout: nodes push apart, links pull together, and the middle draws everything in. */
+class GraphLayout(private val graph: Graph, seed: Int = 7) {
+    val x = FloatArray(graph.nodes.size)
+    val y = FloatArray(graph.nodes.size)
+    private val vx = FloatArray(graph.nodes.size)
+    private val vy = FloatArray(graph.nodes.size)
+    /** Cools with every step, so the layout always comes to rest. */
+    private var heat = 1f
+
+    init {
+        // A spiral start spreads nodes evenly and comes out the same every time.
+        val golden = 2.39996f + seed * 0f
+        for (i in x.indices) {
+            val r = 30f * kotlin.math.sqrt(i + 1f)
+            x[i] = r * kotlin.math.cos(golden * i)
+            y[i] = r * kotlin.math.sin(golden * i)
+        }
+    }
+
+    /** One step. Returns how much is still moving, so the caller knows when to stop. */
+    fun step(): Float {
+        val n = x.size
+        if (n == 0) return 0f
+        val fx = FloatArray(n)
+        val fy = FloatArray(n)
+        for (i in 0 until n) for (j in i + 1 until n) {
+            var dx = x[i] - x[j]
+            var dy = y[i] - y[j]
+            var d2 = dx * dx + dy * dy
+            if (d2 < 1f) { dx = 1f; dy = 0.5f; d2 = 1.25f }
+            val f = 9000f / d2
+            fx[i] += dx * f; fy[i] += dy * f
+            fx[j] -= dx * f; fy[j] -= dy * f
+        }
+        for ((a, b) in graph.edges) {
+            val dx = x[b] - x[a]
+            val dy = y[b] - y[a]
+            fx[a] += dx * .035f; fy[a] += dy * .035f
+            fx[b] -= dx * .035f; fy[b] -= dy * .035f
+        }
+        var moving = 0f
+        for (i in 0 until n) {
+            fx[i] -= x[i] * .012f
+            fy[i] -= y[i] * .012f
+            vx[i] = (vx[i] + fx[i] * .35f) * .72f
+            vy[i] = (vy[i] + fy[i] * .35f) * .72f
+            x[i] += vx[i] * heat
+            y[i] += vy[i] * heat
+            moving += (kotlin.math.abs(vx[i]) + kotlin.math.abs(vy[i])) * heat
+        }
+        heat *= .99f
+        return moving / n
+    }
+
+    fun nearest(px: Float, py: Float, within: Float): Int? {
+        var best = -1
+        var bestD = within * within
+        for (i in x.indices) {
+            val d = (x[i] - px) * (x[i] - px) + (y[i] - py) * (y[i] - py)
+            if (d <= bestD) { best = i; bestD = d }
+        }
+        return best.takeIf { it >= 0 }
+    }
+}

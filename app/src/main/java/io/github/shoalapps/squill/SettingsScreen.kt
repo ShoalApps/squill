@@ -59,7 +59,7 @@ private fun open(context: Context, url: String) {
 }
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(notes: io.github.shoalapps.squill.notes.NotesViewModel, onBack: () -> Unit) {
     val context = LocalContext.current
     BackHandler(onBack = onBack)
     var snooze by remember { mutableIntStateOf(Prefs.snoozeMinutes(context)) }
@@ -74,6 +74,33 @@ fun SettingsScreen(onBack: () -> Unit) {
             val text = context.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() }
             Store.import(context, text).also { Scheduler.scheduleAll(context) }
         }.onSuccess { toast("Restored $it reminders") }.onFailure { toast("That isn't a Squill backup") }
+    }
+    val backupNotes = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        if (uri != null) notes.bulk({ vault -> context.contentResolver.openOutputStream(uri, "wt")!!.use { vault.export(it) } }) { result ->
+            toast(result.fold({ "Backed up $it files" }, { "Couldn't save the backup" }))
+        }
+    }
+    val restoreNotes = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) notes.bulk({ vault -> context.contentResolver.openInputStream(uri)!!.use { vault.importZip(it) } }) { result ->
+            toast(result.fold({ if (it == 0) "No notes in that file" else "Added $it notes" }, { "That file couldn't be read" }))
+        }
+    }
+    val importFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) notes.bulk({ vault ->
+            var count = 0
+            fun walk(dir: androidx.documentfile.provider.DocumentFile, prefix: String) {
+                for (file in dir.listFiles()) {
+                    val name = file.name ?: continue
+                    if (name.startsWith(".")) continue
+                    if (file.isDirectory) walk(file, "$prefix$name/")
+                    else context.contentResolver.openInputStream(file.uri)?.use { count += vault.importFile(prefix + name, it) }
+                }
+            }
+            walk(androidx.documentfile.provider.DocumentFile.fromTreeUri(context, uri)!!, "")
+            count
+        }) { result ->
+            toast(result.fold({ if (it == 0) "No Markdown files in that folder" else "Added $it notes" }, { "That folder couldn't be read" }))
+        }
     }
     Scaffold(
         topBar = {
@@ -124,6 +151,21 @@ fun SettingsScreen(onBack: () -> Unit) {
                 },
             )
             ListItem(
+                headlineContent = { Text("Back up notes") },
+                supportingContent = { Text("Save them all as a zip of Markdown files, which any Markdown app can open. Uninstalling Squill deletes them otherwise.") },
+                modifier = Modifier.clickable { backupNotes.launch("squill-notes.zip") },
+            )
+            ListItem(
+                headlineContent = { Text("Restore notes") },
+                supportingContent = { Text("Adds the notes in a zip beside what's here. Nothing is overwritten.") },
+                modifier = Modifier.clickable { restoreNotes.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream")) },
+            )
+            ListItem(
+                headlineContent = { Text("Import a folder of notes") },
+                supportingContent = { Text("Copies the Markdown files from a folder, such as an Obsidian vault, keeping its subfolders") },
+                modifier = Modifier.clickable { runCatching { importFolder.launch(null) } },
+            )
+            ListItem(
                 headlineContent = { Text("Back up reminders") },
                 supportingContent = { Text("Save them to a file you choose. Uninstalling Squill deletes them otherwise.") },
                 modifier = Modifier.clickable { backup.launch("squill-backup.json") },
@@ -145,7 +187,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             )
             ListItem(
                 headlineContent = { Text("Privacy") },
-                supportingContent = { Text("Your reminders stay on this phone. Squill has no account, no network access and no tracking.") },
+                supportingContent = { Text("Your notes and reminders stay on this phone. Squill has no account, no network access and no tracking.") },
                 modifier = Modifier.clickable { open(context, "https://shoalapps.github.io/privacy.html") },
             )
         }

@@ -30,12 +30,25 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
             <!-- Share some text to Squill to make a reminder of it. -->
-            <intent-filter android:label="Jot down">
+            <intent-filter android:label="New reminder">
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
+
+        <!-- Share something to Squill as a note. Same screen, second entry in the share sheet. -->
+        <activity-alias
+            android:name=".ShareAsNote"
+            android:targetActivity=".MainActivity"
+            android:label="New note"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity-alias>
 
         <receiver android:name=".AlarmReceiver" android:exported="false" />
 

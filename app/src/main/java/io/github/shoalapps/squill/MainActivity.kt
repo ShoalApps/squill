@@ -17,6 +17,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 
 class MainActivity : ComponentActivity() {
     private val vm: RemindersViewModel by viewModels()
+    private val notes: io.github.shoalapps.squill.notes.NotesViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -31,7 +32,7 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(owner) {
                 owner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) { vm.refresh() }
             }
-            SquillTheme { SquillScreen(vm) }
+            SquillTheme { SquillHome(vm, notes) }
         }
     }
 
@@ -40,11 +41,15 @@ class MainActivity : ComponentActivity() {
         handle(intent)
     }
 
-    /** Shared text and the widget's + button both open the jot-down dialog. */
+    /** Shared text and the widget's + button start a note or a reminder. */
     fun handle(intent: Intent) {
         when (intent.action) {
             ACTION_JOT -> vm.jot("")
-            Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)?.let { vm.jot(it.trim().lineSequence().first().take(200)) }
+            Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)?.takeIf { it.isNotBlank() }?.let { text ->
+                // Squill appears twice in the share sheet: as a note, and as a reminder.
+                if (intent.component?.className?.endsWith(".ShareAsNote") == true) notes.share(text)
+                else vm.jot(text.trim().lineSequence().first().take(200))
+            }
         }
     }
 

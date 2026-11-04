@@ -1,6 +1,19 @@
 <p align="center"><a href="https://shoalapps.github.io/"><img src="https://raw.githubusercontent.com/ShoalApps/shoalapps.github.io/main/assets/readme/squill.svg" alt="Squill - a Shoal app, with the rest of the Shoal family" width="100%"></a></p>
 
-Jot reminders down like ink on paper. A small Material You reminders app for Android.
+Notes, links and reminders, as ordinary files on your phone. A Material You notes app for Android.
+
+## Notes
+
+- Notes are plain Markdown files in folders, so they're yours: back them up as a zip that any Markdown app can open
+- Link notes with `[[double brackets]]`, follow them, see what links back, and watch it all join up in the graph
+- Rename or move a note and every link to it is updated
+- Keep-style cards: pins, colours, checklists you can tick, tags and search across everything
+- Reading and writing views, a formatting bar, undo and redo, tables and code blocks
+- A note for today, a trash you can restore from, and two panes on a tablet
+- Import a folder of Markdown files, such as an Obsidian vault, keeping its subfolders
+- Share text from any app to make a note of it
+
+## Reminders
 
 - One-off, daily, weekday, weekly, monthly and yearly reminders that ring at the exact minute, even in Doze
 - Done and Snooze buttons on the notification, with a snooze length you choose
