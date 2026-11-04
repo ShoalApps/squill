@@ -1,0 +1,30 @@
+name: Check updates
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Build and run unit tests
+        run: ./gradlew assembleDebug testDebugUnitTest --stacktrace
+      - name: Merge library update and publish
+        # GitHub won't let this token change workflow files, so Actions-version bumps wait for a person.
+        if: github.event.pull_request.user.login == 'dependabot[bot]' && !startsWith(github.head_ref, 'dependabot/github_actions')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr merge "${{ github.event.pull_request.number }}" --squash --delete-branch
+          gh workflow run build.yml --ref main
