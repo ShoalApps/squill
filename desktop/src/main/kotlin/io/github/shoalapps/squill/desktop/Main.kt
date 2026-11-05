@@ -121,6 +121,11 @@ fun App(model: Model, dark: Boolean = androidx.compose.foundation.isSystemInDark
             var open by remember { mutableStateOf(initialOpen) }
             val library by model.library.collectAsState()
             val problem by model.problem.collectAsState()
+            val locked by model.needsUnlock.collectAsState()
+            if (locked) {
+                UnlockPane(model)
+                return@Surface
+            }
             Row(Modifier.fillMaxSize()) {
                 NavigationRail {
                     Page.entries.forEach { p -> NavigationRailItem(page == p, { page = p }, icon = { Text(when (p) { Page.NOTES -> "✎"; Page.GRAPH -> "◉"; Page.DEVICES -> "⇄" }) }, label = { Text(p.label) }) }
@@ -383,6 +388,7 @@ private fun DevicesPage(model: Model, onChooseFolder: () -> Unit) {
             }
         }
         LaunchedEffect(peers.size) { if (code != null && peers.isNotEmpty()) model.endPairing() }
+        EncryptSection(model)
         if (peers.isEmpty()) Text("Nothing paired yet.", color = c.onSurfaceVariant)
         peers.forEach { p ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

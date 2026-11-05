@@ -19,7 +19,7 @@ Notes, links and reminders, as ordinary files on your phone. A Material You note
 
 - **Squilly's tour** shows what each part of Squill does on first run, and again from Settings.
 - **Where notes live**: private to Squill, or `Documents/Squill` as ordinary files other apps can open. Settings moves everything, and only removes the originals once it has all arrived.
-- **Encrypt all notes**: AES-256-GCM under a password that's never stored. Squill asks for it when it opens and locks after five minutes away. File names stay visible, and backups and copies synced to a computer aren't encrypted.
+- **Encrypt all notes**: AES-256-GCM under a password that's never stored. Squill asks for it when it opens and locks after five minutes away. File names stay visible, and backups aren't encrypted. The computer can encrypt its folder too, under its own password, in Devices.
 - **Locked notes**: a separate encrypted vault with its own password, names included. It stays out of the list, search, graph and sync, and locks when you leave.
 - **Forgetting a password loses those notes for good.** There's no recovery.
 - **Graph linking**: drag one note onto another on the phone to link them, with Undo.

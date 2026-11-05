@@ -1,5 +1,8 @@
 package io.github.shoalapps.squill.sync
 
+import io.github.shoalapps.squill.notes.LockedNotes
+import io.github.shoalapps.squill.notes.NoteCipher
+import io.github.shoalapps.squill.notes.PasswordKey
 import io.github.shoalapps.squill.notes.Vault
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -156,6 +159,23 @@ class SyncFlowTest {
         assertEquals(1, sync().conflicts)
         assertEquals("phone", read(desk, "A.md"))
         assertEquals("desk", read(phone, "A (from Desk).md"))
+        assertEquals(0, sync().total)
+    }
+
+    @Test fun eachSideStaysEncryptedUnderItsOwnPassword() {
+        write(phone, "A.md", "from the phone")
+        write(desk, "B.md", "from the desk")
+        phone.convert(PasswordKey.create(File(phone.root, LockedNotes.ALL_NOTES_KEY), "phone password"))
+        desk.convert(PasswordKey.create(File(desk.root, LockedNotes.ALL_NOTES_KEY), "desk password"))
+        sync()
+        fun scan(v: Vault) = v.root.walkTopDown().filter { it.isFile && it.extension == "md" }.toList()
+        listOf(phone, desk).forEach { v ->
+            assertEquals(2, scan(v).size)
+            scan(v).forEach { assertTrue(it.path, NoteCipher.isSealed(it.readBytes())) }
+        }
+        assertEquals("from the phone", desk.read("A.md").body)
+        assertEquals("from the desk", phone.read("B.md").body)
+        // Their sealed bytes differ, but the notes match, so nothing more needs doing.
         assertEquals(0, sync().total)
     }
 

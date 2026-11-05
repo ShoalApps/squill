@@ -4,9 +4,11 @@ import io.github.shoalapps.squill.notes.Deck
 import io.github.shoalapps.squill.notes.DeckInfo
 import io.github.shoalapps.squill.notes.Library
 import io.github.shoalapps.squill.notes.Links
+import io.github.shoalapps.squill.notes.LockedNotes
 import io.github.shoalapps.squill.notes.Markdown
 import io.github.shoalapps.squill.notes.Note
 import io.github.shoalapps.squill.notes.NoteInfo
+import io.github.shoalapps.squill.notes.PasswordKey
 import io.github.shoalapps.squill.notes.Sketch
 import io.github.shoalapps.squill.notes.SketchInfo
 import io.github.shoalapps.squill.notes.Vault
@@ -55,15 +57,79 @@ class Model(val root: File, private val hosting: Boolean = true, private val dev
     private var knownDecks = HashMap<String, DeckInfo>()
     private var lastStamp = 0L
 
+    private val keyFile = File(root, LockedNotes.ALL_NOTES_KEY)
+    private val _needsUnlock = MutableStateFlow(keyFile.exists())
+    /** True while this folder is encrypted and its password hasn't been given. */
+    val needsUnlock: StateFlow<Boolean> = _needsUnlock.asStateFlow()
+    private val _encrypted = MutableStateFlow(keyFile.exists())
+    val encrypted: StateFlow<Boolean> = _encrypted.asStateFlow()
+
     fun start() {
+        worker.scheduleWithFixedDelay({ runCatching { if (!_needsUnlock.value) reloadIfChanged() } }, 2, 2, TimeUnit.SECONDS)
+        if (!_needsUnlock.value) open()
+    }
+
+    /** Nothing is read, and no device can connect, until the folder can actually be opened. */
+    private fun open() {
         reloadNow()
-        worker.scheduleWithFixedDelay({ runCatching { reloadIfChanged() } }, 2, 2, TimeUnit.SECONDS)
         if (hosting) runCatching {
             server = SyncProtocol.Server(vault, peers, deviceName, lock = lock).also {
                 it.onChange = { _peerList.value = peers.peers(); worker.execute { runCatching { reloadNow() } } }
                 it.start()
             }
         }.onFailure { _problem.value = "Sync couldn't start, so devices can't connect: ${it.message}" }
+    }
+
+    private fun <T> background(onDone: (Result<T>) -> Unit, block: () -> T) {
+        worker.execute {
+            val result = runCatching { synchronized(lock) { block() } }
+            javax.swing.SwingUtilities.invokeLater { onDone(result) }
+        }
+    }
+
+    fun unlock(password: String, onDone: (Boolean) -> Unit) = background({ onDone(it.isSuccess) }) {
+        vault.cipher = PasswordKey.unlock(keyFile, password)
+        _needsUnlock.value = false
+        open()
+    }
+
+    /** Forgets the key and everything read with it, and stops devices connecting. */
+    fun lockNow() {
+        if (!keyFile.exists()) return
+        worker.execute {
+            synchronized(lock) {
+                runCatching { server?.close() }
+                server = null
+                vault.cipher = null
+                known = HashMap(); knownSketches = HashMap(); knownDecks = HashMap()
+                _library.value = Library()
+                _paintings.value = emptyList()
+                _needsUnlock.value = true
+            }
+        }
+    }
+
+    /** Seals everything here under this computer's own password. Notes reach it from phones over the sealed link. */
+    fun encrypt(password: String, onDone: (Result<Unit>) -> Unit) = background(onDone) {
+        if (keyFile.exists()) throw VaultException("This folder is already encrypted")
+        val key = PasswordKey.create(keyFile, password)
+        try {
+            vault.convert(key)
+        } catch (e: Exception) {
+            // Nothing was sealed unless the vault took the key, and then the key has to stay.
+            if (vault.cipher == null) keyFile.delete() else _encrypted.value = true
+            throw e
+        }
+        _encrypted.value = true
+        reloadNow()
+    }
+
+    fun decrypt(password: String, onDone: (Result<Unit>) -> Unit) = background(onDone) {
+        PasswordKey.unlock(keyFile, password)
+        vault.convert(null)
+        keyFile.delete()
+        _encrypted.value = false
+        reloadNow()
     }
 
     fun stop() {
