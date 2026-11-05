@@ -192,6 +192,12 @@ class GraphLayout(private val graph: Graph, seed: Int = 7, from: GraphLayout? = 
     val y = FloatArray(graph.nodes.size)
     private val vx = FloatArray(graph.nodes.size)
     private val vy = FloatArray(graph.nodes.size)
+    /** Busy notes pull less per link, so a hub doesn't shake itself apart. */
+    private val pull = run {
+        val degree = IntArray(graph.nodes.size)
+        graph.edges.forEach { (a, b) -> degree[a]++; degree[b]++ }
+        FloatArray(graph.edges.size) { val (a, b) = graph.edges[it]; LINK_PULL / minOf(degree[a], degree[b]).coerceAtLeast(1) }
+    }
 
     init {
         // A spiral start spreads nodes evenly and comes out the same every time.
@@ -209,7 +215,7 @@ class GraphLayout(private val graph: Graph, seed: Int = 7, from: GraphLayout? = 
         }
     }
 
-    /** A node being dragged: it stays under the finger while the rest carry on around it. */
+    /** A node being dragged. Everything stands still until it's let go, so a note can be dropped on another without chasing it. */
     var held: Int = -1
 
     fun place(i: Int, px: Float, py: Float) {
@@ -223,6 +229,7 @@ class GraphLayout(private val graph: Graph, seed: Int = 7, from: GraphLayout? = 
     fun step(): Float {
         val n = x.size
         if (n == 0) return 0f
+        if (held in 0 until n) { vx.fill(0f); vy.fill(0f); return 0f }
         val fx = FloatArray(n)
         val fy = FloatArray(n)
         fun push(i: Int, j: Int) {
@@ -230,7 +237,8 @@ class GraphLayout(private val graph: Graph, seed: Int = 7, from: GraphLayout? = 
             var dy = y[i] - y[j]
             var d2 = dx * dx + dy * dy
             if (d2 < 1f) { dx = 1f; dy = 0.5f; d2 = 1.25f }
-            val f = 9000f / d2
+            // Notes lying on top of each other ease apart: this would otherwise grow without limit as they touch.
+            val f = REPEL / maxOf(d2, CLOSE * CLOSE)
             fx[i] += dx * f; fy[i] += dy * f
             fx[j] -= dx * f; fy[j] -= dy * f
         }
@@ -249,11 +257,11 @@ class GraphLayout(private val graph: Graph, seed: Int = 7, from: GraphLayout? = 
                 }
             }
         }
-        for ((a, b) in graph.edges) {
+        graph.edges.forEachIndexed { e, (a, b) ->
             val dx = x[b] - x[a]
             val dy = y[b] - y[a]
-            fx[a] += dx * .035f; fy[a] += dy * .035f
-            fx[b] -= dx * .035f; fy[b] -= dy * .035f
+            fx[a] += dx * pull[e]; fy[a] += dy * pull[e]
+            fx[b] -= dx * pull[e]; fy[b] -= dy * pull[e]
         }
         var moving = 0f
         for (i in 0 until n) {
@@ -261,10 +269,11 @@ class GraphLayout(private val graph: Graph, seed: Int = 7, from: GraphLayout? = 
             fy[i] -= y[i] * .012f
             vx[i] = (vx[i] + fx[i] * .35f) * .72f
             vy[i] = (vy[i] + fy[i] * .35f) * .72f
-            if (i == held) { vx[i] = 0f; vy[i] = 0f; continue }
-            x[i] += vx[i] * heat
-            y[i] += vy[i] * heat
-            moving += (kotlin.math.abs(vx[i]) + kotlin.math.abs(vy[i])) * heat
+            val sx = (vx[i] * heat).coerceIn(-MAX_STEP, MAX_STEP)
+            val sy = (vy[i] * heat).coerceIn(-MAX_STEP, MAX_STEP)
+            x[i] += sx
+            y[i] += sy
+            moving += kotlin.math.abs(sx) + kotlin.math.abs(sy)
         }
         heat *= .99f
         return moving / n
@@ -296,6 +305,12 @@ class GraphLayout(private val graph: Graph, seed: Int = 7, from: GraphLayout? = 
 
     private companion object {
         const val EVERY_PAIR_LIMIT = 800
+        const val REPEL = 5000f
+        const val LINK_PULL = .08f
+        /** Closer than this, the push between two notes stops growing. */
+        const val CLOSE = 30f
+        /** The most a note moves in one step, so nothing is ever flung across the graph. */
+        const val MAX_STEP = 8f
         const val CELL = 320f
     }
 }

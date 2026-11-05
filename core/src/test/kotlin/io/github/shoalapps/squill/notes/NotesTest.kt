@@ -695,6 +695,37 @@ class GraphLinkTest {
         assertEquals("[[Ideas/Boats]]", Links.addLink("[[Ideas/Boats]]", "Boats", r))
     }
 
+    @Test fun everythingStandsStillWhileANoteIsHeld() {
+        val g = Graph.of(mapOf("A.md" to listOf("B"), "B.md" to listOf("C"), "C.md" to emptyList(), "D.md" to emptyList()))
+        val layout = GraphLayout(g)
+        repeat(30) { layout.step() }
+        val target = g.nodes.indexOfFirst { it.title == "C" }
+        val held = g.nodes.indexOfFirst { it.title == "D" }
+        val x = layout.x.copyOf(); val y = layout.y.copyOf()
+        layout.held = held
+        // Right next to the target, which would have pushed it away.
+        layout.place(held, x[target] + 2f, y[target] + 2f)
+        repeat(50) { layout.step() }
+        for (i in x.indices) if (i != held) { assertEquals(x[i], layout.x[i]); assertEquals(y[i], layout.y[i]) }
+    }
+
+    @Test fun aNoteDroppedOnAnotherEasesAwayAndStaysNearby() {
+        val a = Graph.of(mapOf("A.md" to emptyList(), "B.md" to emptyList()))
+        val first = GraphLayout(a)
+        first.place(0, 40f, 40f); first.place(1, 40f, 40f)
+        val g = Graph.of(mapOf("A.md" to listOf("B"), "B.md" to emptyList()))
+        val layout = GraphLayout(g, from = first)
+        var worst = 0f
+        repeat(1500) {
+            val x = layout.x.copyOf(); val y = layout.y.copyOf()
+            layout.step()
+            for (i in x.indices) worst = maxOf(worst, kotlin.math.hypot(layout.x[i] - x[i], layout.y[i] - y[i]))
+        }
+        assertTrue("jumped $worst in a step", worst < 12f)
+        val gap = kotlin.math.hypot(layout.x[0] - layout.x[1], layout.y[0] - layout.y[1])
+        assertTrue("came to rest $gap apart", gap in 40f..320f)
+    }
+
     @Test fun nodesStayPutAcrossChangesAndWhileHeld() {
         val a = Graph.of(mapOf("A.md" to emptyList(), "B.md" to emptyList()))
         val first = GraphLayout(a)

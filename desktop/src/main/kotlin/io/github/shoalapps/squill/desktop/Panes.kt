@@ -320,6 +320,7 @@ private fun GraphCanvas(graph: Graph, last: Array<GraphLayout?>, onOpen: (GraphN
     var panY by remember { mutableFloatStateOf(0f) }
     // Everything stays in view until you move or zoom it yourself.
     var moved by remember { mutableStateOf(false) }
+    var framed by remember { mutableStateOf(false) }
     var settle by remember { mutableIntStateOf(0) }
     var dropOn by remember { mutableIntStateOf(-1) }
     LaunchedEffect(layout, settle) {
@@ -339,6 +340,7 @@ private fun GraphCanvas(graph: Graph, last: Array<GraphLayout?>, onOpen: (GraphN
             .pointerInput(layout) {
                 fun worldX(x: Float) = (x - size.width / 2f - panX) / zoom
                 fun worldY(y: Float) = (y - size.height / 2f - panY) / zoom
+                var grabX = 0f; var grabY = 0f
                 fun release(join: Boolean) {
                     val held = layout.held
                     if (held < 0) return
@@ -350,14 +352,18 @@ private fun GraphCanvas(graph: Graph, last: Array<GraphLayout?>, onOpen: (GraphN
                 }
                 detectDragGestures(
                     onDragStart = { at ->
-                        layout.nearest(worldX(at.x), worldY(at.y), 20f / zoom)?.let { layout.held = it; settle++ }
+                        layout.nearest(worldX(at.x), worldY(at.y), 20f / zoom)?.let {
+                            // Keeps the note where it was grabbed.
+                            grabX = layout.x[it] - worldX(at.x); grabY = layout.y[it] - worldY(at.y)
+                            layout.held = it; settle++
+                        }
                     },
                     onDragEnd = { release(true) },
                     onDragCancel = { release(false) },
                 ) { change, drag ->
                     change.consume()
                     if (layout.held >= 0) {
-                        val wx = worldX(change.position.x); val wy = worldY(change.position.y)
+                        val wx = worldX(change.position.x) + grabX; val wy = worldY(change.position.y) + grabY
                         layout.place(layout.held, wx, wy)
                         var best = -1
                         var bestD = (28f / zoom) * (28f / zoom)
@@ -395,7 +401,12 @@ private fun GraphCanvas(graph: Graph, last: Array<GraphLayout?>, onOpen: (GraphN
         frame.let { }
         if (!moved && layout.held < 0) {
             val (z, x, y) = layout.fit(size.width, size.height, 70f)
-            zoom = z; panX = x; panY = y
+            // Glides rather than jumps, so a note that was just dropped doesn't seem to leap. Writing these redraws, until it arrives.
+            val close = !framed || (kotlin.math.abs(z - zoom) < .002f && kotlin.math.abs(x - panX) < .5f && kotlin.math.abs(y - panY) < .5f)
+            zoom = if (close) z else zoom + (z - zoom) * .12f
+            panX = if (close) x else panX + (x - panX) * .12f
+            panY = if (close) y else panY + (y - panY) * .12f
+            framed = true
         }
         val middle = Offset(size.width / 2f + panX, size.height / 2f + panY)
         fun at(i: Int) = Offset(middle.x + layout.x[i] * zoom, middle.y + layout.y[i] * zoom)

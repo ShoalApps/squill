@@ -109,6 +109,7 @@ private fun GraphCanvas(graph: Graph, last: Array<GraphLayout?>, onOpen: (GraphN
     var panY by remember { mutableFloatStateOf(0f) }
     // Everything stays in view until you move or zoom it yourself.
     var moved by remember { mutableStateOf(false) }
+    var framed by remember { mutableStateOf(false) }
     var settle by remember { mutableIntStateOf(0) }
     var dropOn by remember { mutableIntStateOf(-1) }
     LaunchedEffect(layout, settle) {
@@ -120,6 +121,7 @@ private fun GraphCanvas(graph: Graph, last: Array<GraphLayout?>, onOpen: (GraphN
             frame++
         }
     }
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     val c = MaterialTheme.colorScheme
     val measurer = rememberTextMeasurer(cacheSize = 256)
     val labelStyle = TextStyle(color = c.onSurface, fontSize = 12.sp)
@@ -136,7 +138,11 @@ private fun GraphCanvas(graph: Graph, last: Array<GraphLayout?>, onOpen: (GraphN
                     fun worldY(y: Float) = (y - middleY - panY) / zoom
                     val slop = viewConfiguration.touchSlop
                     val grabbed = layout.nearest(worldX(down.position.x), worldY(down.position.y), 28.dp.toPx() / zoom)
+                    // Keeps the note where it was grabbed, rather than jumping to the middle of the finger.
+                    val grabX = if (grabbed != null) layout.x[grabbed] - worldX(down.position.x) else 0f
+                    val grabY = if (grabbed != null) layout.y[grabbed] - worldY(down.position.y) else 0f
                     var dragging = false
+                    var pinched = false
                     var lastSpan = 0f
                     var lastX = down.position.x
                     var lastY = down.position.y
@@ -149,7 +155,7 @@ private fun GraphCanvas(graph: Graph, last: Array<GraphLayout?>, onOpen: (GraphN
                                 layout.held = -1
                                 val target = dropOn
                                 dropOn = -1
-                                if (!dragging) onOpen(graph.nodes[grabbed])
+                                if (!dragging && !pinched) onOpen(graph.nodes[grabbed])
                                 else if (target >= 0) onJoin(graph.nodes[grabbed], graph.nodes[target])
                                 layout.reheat(); settle++
                             }
@@ -157,7 +163,8 @@ private fun GraphCanvas(graph: Graph, last: Array<GraphLayout?>, onOpen: (GraphN
                         }
                         if (live.size >= 2) {
                             // A second finger always means pinch, even if the first was on a note.
-                            if (layout.held >= 0) { layout.held = -1; dropOn = -1; layout.reheat() }
+                            pinched = true
+                            if (layout.held >= 0) { layout.held = -1; dropOn = -1; layout.reheat(); settle++ }
                             val a = live[0].position; val b = live[1].position
                             val span = kotlin.math.hypot(b.x - a.x, b.y - a.y)
                             val cx = (a.x + b.x) / 2f; val cy = (a.y + b.y) / 2f
@@ -174,9 +181,11 @@ private fun GraphCanvas(graph: Graph, last: Array<GraphLayout?>, onOpen: (GraphN
                             if (!dragging && kotlin.math.hypot(p.x - down.position.x, p.y - down.position.y) > slop) dragging = true
                             if (dragging) {
                                 if (layout.held >= 0) {
-                                    val wx = worldX(p.x); val wy = worldY(p.y)
+                                    val wx = worldX(p.x) + grabX; val wy = worldY(p.y) + grabY
                                     layout.place(layout.held, wx, wy)
-                                    dropOn = closestOther(layout, layout.held, wx, wy, 36.dp.toPx() / zoom)
+                                    val over = closestOther(layout, layout.held, wx, wy, 36.dp.toPx() / zoom)
+                                    if (over >= 0 && over != dropOn) haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                    dropOn = over
                                     frame++
                                 } else if (lastSpan == 0f) {
                                     panX += p.x - lastX; panY += p.y - lastY
@@ -193,7 +202,12 @@ private fun GraphCanvas(graph: Graph, last: Array<GraphLayout?>, onOpen: (GraphN
         frame.let { } // Redraw as the layout moves.
         if (!moved && layout.held < 0) {
             val (z, x, y) = layout.fit(size.width, size.height, 56.dp.toPx())
-            zoom = z; panX = x; panY = y
+            // Glides rather than jumps, so a note that was just dropped doesn't seem to leap. Writing these redraws, until it arrives.
+            val close = !framed || (kotlin.math.abs(z - zoom) < .002f && kotlin.math.abs(x - panX) < .5f && kotlin.math.abs(y - panY) < .5f)
+            zoom = if (close) z else zoom + (z - zoom) * .12f
+            panX = if (close) x else panX + (x - panX) * .12f
+            panY = if (close) y else panY + (y - panY) * .12f
+            framed = true
         }
         val middle = Offset(size.width / 2f + panX, size.height / 2f + panY)
         fun at(i: Int) = Offset(middle.x + layout.x[i] * zoom, middle.y + layout.y[i] * zoom)
