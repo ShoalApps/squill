@@ -150,6 +150,7 @@ object SyncProtocol {
     class Server(private val vault: Vault, private val peers: PeerStore, private val deviceName: String, private val port: Int = PORT, private val lock: Any = Any()) : Closeable {
         private val server = ServerSocket()
         private var probe: DatagramSocket? = null
+        private var accepting: Thread? = null
         @Volatile private var pairing: String? = null
         @Volatile var onChange: () -> Unit = {}
         val boundPort: Int get() = server.localPort
@@ -157,7 +158,7 @@ object SyncProtocol {
         fun start() {
             server.reuseAddress = true
             server.bind(InetSocketAddress(port))
-            Thread({ acceptLoop() }, "squill-sync").apply { isDaemon = true }.start()
+            accepting = Thread({ acceptLoop() }, "squill-sync").apply { isDaemon = true; start() }
             runCatching {
                 val s = DatagramSocket(DISCOVERY_PORT)
                 probe = s
@@ -185,6 +186,8 @@ object SyncProtocol {
         private fun acceptLoop() {
             while (!server.isClosed) {
                 val socket = try { server.accept() } catch (_: SocketException) { return }
+                // Closing doesn't stop a connection that was already on its way in.
+                if (server.isClosed) { runCatching { socket.close() }; return }
                 Thread({ runCatching { socket.use { handle(it) } } }, "squill-peer").apply { isDaemon = true }.start()
             }
         }
@@ -259,6 +262,7 @@ object SyncProtocol {
         override fun close() {
             runCatching { server.close() }
             runCatching { probe?.close() }
+            runCatching { accepting?.join(2000) }
         }
     }
 
