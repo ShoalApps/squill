@@ -48,6 +48,7 @@ Not everything in Krita is here: there are no layer groups, filter masks, vector
 ## Documents and slides
 
 - Save any note as Word (.docx) or PDF, and open Word files as notes
+- Bring in your Google Keep notes from a Google Takeout zip, with checklists, labels and photos. No Google account is linked, and importing twice adds nothing twice
 - Presentations you can really edit on a phone: drag, resize and restyle text, boxes, circles, lines and pictures, with speaker notes
 - Reveal things click by click when presenting, with undo and redo throughout
 - Open and save PowerPoint (.pptx). What's on the slide travels; reveal steps stay in Squill, and imported animations and master slides don't come across
@@ -55,7 +56,7 @@ Not everything in Krita is here: there are no layer groups, filter masks, vector
 ## Sync and your computer
 
 - [Squill for Linux, Windows and Mac](https://github.com/ShoalApps/squill/releases/tag/desktop-latest) keeps your notes as ordinary files in a folder, so other Markdown apps can open it too
-- Write and read notes there with a live preview, backlinks, the graph, tags and search. Drawings, slides and paintings can be viewed there, and edited on your phone
+- Write and read notes there with a live preview, backlinks, the graph, tags and search. Edit slide text, speaker notes and order there too. Drawings and paintings, and the layout of slides, are viewed there and edited on your phone
 - Pair your phone with a one-time code. They then sync directly over your own network, encrypted, with no account and no cloud
 - If both change the same note before syncing, both versions are kept. Deletions go to the trash on the other device. Reminders stay on the phone
 
