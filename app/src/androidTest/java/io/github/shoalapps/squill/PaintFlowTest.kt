@@ -2,6 +2,8 @@ package io.github.shoalapps.squill
 
 import android.content.Context
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasContentDescription
@@ -45,6 +47,9 @@ class PaintFlowTest {
 
     @Before fun clean() {
         root.listFiles()?.filter { it.name != ".seeded" }?.forEach { it.deleteRecursively() }
+        val brushes = io.github.shoalapps.squill.paint.BrushLibraryFile(File(context.filesDir, "brush-library.json"))
+        brushes.save(io.github.shoalapps.squill.paint.BrushLibrary())
+        brushes.load() // Drain the disk queue before opening the next editor.
         context.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().remove("paint-mode").commit()
         rule.runOnUiThread { vm.refresh() }
         rule.waitForIdle()
@@ -63,6 +68,26 @@ class PaintFlowTest {
     }
     private fun paint() = canvas().performTouchInput { swipe(Offset(width * .3f, height * .4f), Offset(width * .7f, height * .6f), 300) }
     private fun back() { rule.onNodeWithContentDescription("Back").performClick(); rule.waitForIdle() }
+
+    @Test fun savedCustomBrushSurvivesActivityRecreation() {
+        open(advanced = true)
+        rule.onNodeWithContentDescription("Open brush settings").performScrollTo().performClick()
+        rule.onNodeWithText("Save as new brush").performScrollTo().performClick()
+        rule.onNodeWithText("Name", substring = false).performTextInput("Test custom ink")
+        rule.onNodeWithText("Save", substring = false).performClick()
+        rule.waitForIdle()
+        // A real key, which the sheet's own window receives and closes for.
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        rule.waitForIdle()
+        rule.onNodeWithText("Test custom ink", substring = false).assertIsSelected()
+        val libraryFile = File(context.filesDir, "brush-library.json")
+        waitFor {
+            runCatching { io.github.shoalapps.squill.paint.BrushLibrary.decode(libraryFile.readText()).lastBrush == "Test custom ink" }.getOrDefault(false)
+        }
+        rule.activityRule.scenario.recreate()
+        rule.waitUntilExactlyOneExists(hasContentDescription("Painting canvas", substring = true), 15000)
+        rule.onNodeWithText("Test custom ink", substring = false).assertIsSelected()
+    }
 
     @Test fun aNewPaintingIsAValidFile() {
         open()

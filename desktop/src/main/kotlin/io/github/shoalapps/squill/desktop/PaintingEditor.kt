@@ -141,7 +141,8 @@ internal fun PaintingCopy.signature(): String {
 @Composable
 fun PaintingEditor(document: PaintingCopy, onSave: (PaintingCopy) -> Unit, modifier: Modifier = Modifier,
                    saveFailures: Int = 0, onConflict: (PaintingCopy) -> Unit = {},
-                   onLeave: ((() -> PaintingCopy?) -> Unit)? = null) {
+                   onLeave: ((() -> PaintingCopy?) -> Unit)? = null,
+                   brushLibraryFile: BrushLibraryFile? = null) {
     var copy by remember { mutableStateOf(document) }
     var image by remember { mutableStateOf<ImageBitmap?>(null) }
     var revision by remember { mutableLongStateOf(0) }
@@ -183,12 +184,39 @@ fun PaintingEditor(document: PaintingCopy, onSave: (PaintingCopy) -> Unit, modif
     DisposableEffect(Unit) { onDispose { session.leave({ save(it) }, requested != saved || dragging, leave) } }
     fun edit(block: Painting.() -> Unit) { requested++; session.submit { this.edit(block) } }
     fun history(redo: Boolean) { requested++; session.submit { this.history(redo) } }
-    var brush by remember { mutableStateOf(BrushPresets.all.first()) }
+    val libraryFile = remember(brushLibraryFile) { brushLibraryFile ?: BrushLibraryFile(java.io.File(System.getProperty("user.home"), ".config/squill/brush-library.json")) }
+    val initialLibrary = remember(libraryFile) { libraryFile.load() }
+    var library by remember(brushLibraryFile) { mutableStateOf(initialLibrary) }
+    var libraryError by remember { mutableStateOf<String?>(null) }
+    var brush by remember { mutableStateOf(initialLibrary.brush()) }
+    var saveBrushDialog by remember { mutableStateOf(false) }
+    var brushName by remember { mutableStateOf("") }
+    var paletteMenu by remember { mutableStateOf(false) }
     var brushMenu by remember { mutableStateOf(false) }
     var blendMenu by remember { mutableStateOf(false) }
-    var colour by remember { mutableStateOf("#1B1B1F") }
-    var brushSize by remember { mutableFloatStateOf(10f) }
-    var opacity by remember { mutableFloatStateOf(1f) }
+    var colour by remember { mutableStateOf("#%06X".format(initialLibrary.colour and 0xFFFFFF)) }
+    var brushSize by remember { mutableFloatStateOf(brush.size) }
+    var opacity by remember { mutableFloatStateOf(brush.opacity) }
+    fun ink(): Int? = colour.removePrefix("#").takeIf { it.length == 6 }?.toLongOrNull(16)?.toInt()?.or(0xFF000000.toInt())
+    var lastLibraryWrite by remember { mutableStateOf(initialLibrary) }
+    SideEffect {
+        val c = ink() ?: library.colour
+        val recent = if (c == library.colour) library.recent else (listOf(c) + library.recent).distinct().take(12)
+        val next = library.used(brush.copy(size = brushSize, opacity = opacity), c, recent)
+        if (next != library) library = next
+        if (next != lastLibraryWrite) {
+            lastLibraryWrite = next
+            libraryFile.save(next) { error -> SwingUtilities.invokeLater { libraryError = "Brush library could not be saved: ${error.message}" } }
+        }
+    }
+    if (saveBrushDialog) AlertDialog(onDismissRequest = { saveBrushDialog = false }, title = { Text("Save brush") }, text = {
+        OutlinedTextField(brushName, { brushName = it }, label = { Text("Brush name") }, singleLine = true)
+    }, confirmButton = { TextButton({
+        val settings = brush.copy(size = brushSize, opacity = opacity)
+        library = library.used(settings).saveNew(settings, brushName)
+        brush = library.brush(); brushSize = brush.size; opacity = brush.opacity; saveBrushDialog = false
+    }, enabled = brushName.isNotBlank() && library.customs.size < 100) { Text("Save") } },
+        dismissButton = { TextButton({ saveBrushDialog = false }) { Text("Cancel") } })
     var eraser by remember { mutableStateOf(false) }
     var editGuides by remember { mutableStateOf(false) }
     var hand by remember { mutableStateOf(false) }
@@ -209,14 +237,17 @@ fun PaintingEditor(document: PaintingCopy, onSave: (PaintingCopy) -> Unit, modif
             history(it.isShiftPressed); true
         } else false
     }) {
+        libraryError?.let { Text(it, Modifier.padding(8.dp)) }
         copy.readOnlyReason?.let { Text(it, Modifier.padding(8.dp)) }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Box {
                 TextButton({ brushMenu = true }, enabled = !readOnly) { Text(brush.name) }
-                DropdownMenu(brushMenu, { brushMenu = false }) { BrushPresets.all.forEach { preset ->
-                    DropdownMenuItem({ Text(preset.name) }, { brush = preset; brushSize = preset.size; opacity = preset.opacity; eraser = false; brushMenu = false })
+                DropdownMenu(brushMenu, { brushMenu = false }) { library.orderedBrushes.forEach { preset ->
+                    DropdownMenuItem({ Text(preset.name) }, { library = library.used(brush.copy(size = brushSize, opacity = opacity)); brush = library.brush(preset.name); brushSize = brush.size; opacity = brush.opacity; eraser = false; brushMenu = false })
                 } }
             }
+            TextButton({ library = library.toggleFavourite(brush.name) }, modifier = Modifier.semantics { contentDescription = "Favourite brush" }) { Text(if (brush.name in library.favourites) "★" else "☆") }
+            TextButton({ brushName = ""; saveBrushDialog = true }, enabled = !readOnly && library.customs.size < 100) { Text("Save brush") }
             FilterChip(eraser, { eraser = !eraser }, { Text("Eraser") }, enabled = !readOnly)
             FilterChip(editGuides, { editGuides = !editGuides }, { Text("Edit guides") }, enabled = !readOnly)
             FilterChip(hand, { hand = !hand }, { Text("Hand") })
@@ -224,8 +255,20 @@ fun PaintingEditor(document: PaintingCopy, onSave: (PaintingCopy) -> Unit, modif
             TextButton({ history(true) }, enabled = canRedo && !dragging && !readOnly) { Text("Redo") }
             TextButton(::fit) { Text("Fit") }
             OutlinedTextField(colour, { colour = it }, label = { Text("Colour #RRGGBB") }, singleLine = true, modifier = Modifier.width(170.dp), enabled = !readOnly)
-            Column(Modifier.width(150.dp)) { Text("Size ${brushSize.toInt()} px"); Slider(brushSize, { brushSize = it }, modifier = Modifier.semantics { contentDescription = "Brush size" }, valueRange = 1f..300f, enabled = !readOnly) }
+            Column(Modifier.width(150.dp)) { Text("Size ${brushSize.toInt()} px"); Slider(brushSize, { brushSize = it }, modifier = Modifier.semantics { contentDescription = "Brush size" }, valueRange = 1f..600f, enabled = !readOnly) }
             Column(Modifier.width(150.dp)) { Text("Brush opacity ${(opacity * 100).toInt()}%"); Slider(opacity, { opacity = it }, modifier = Modifier.semantics { contentDescription = "Brush opacity" }, enabled = !readOnly) }
+        }
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Box {
+                TextButton({ paletteMenu = true }) { Text("Palette: ${library.palette}") }
+                DropdownMenu(paletteMenu, { paletteMenu = false }) {
+                    library.palettes.forEach { p -> DropdownMenuItem({ Text(p.name) }, { library = library.copy(palette = p.name); paletteMenu = false }) }
+                }
+            }
+            val palette = library.palettes.firstOrNull { it.name == library.palette } ?: library.palettes.first()
+            palette.colours.forEach { c -> Box(Modifier.size(28.dp).background(Color(c)).clickable { colour = "#%06X".format(c and 0xFFFFFF) }
+                .semantics { contentDescription = "Palette colour %08X".format(c) }) }
+            TextButton({ ink()?.let { library = library.addColour(it) } }, enabled = palette.colours.size < 64 && ink() != null && ink() !in palette.colours) { Text("Add current") }
         }
         Text("Scroll to zoom. Alt-drag or use Hand to move.", Modifier.padding(horizontal = 8.dp))
         Row(Modifier.weight(1f)) {

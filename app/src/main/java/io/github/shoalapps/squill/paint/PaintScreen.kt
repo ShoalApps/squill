@@ -50,6 +50,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -58,6 +61,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -113,7 +117,6 @@ private enum class Sheet { GUIDES, LAYERS, BRUSH, COLOUR, FILTERS, IMAGE }
 private enum class Route { STROKE, TOOL, VIEW }
 
 private const val MODE_PREF = "paint-mode"
-private val Swatches = listOf(0xFF000000, 0xFFFFFFFF, 0xFF5F5F66, 0xFFC62828, 0xFFE65100, 0xFFF9A825, 0xFF2E7D32, 0xFF0B7A75, 0xFF1565C0, 0xFF4A4FA3, 0xFF6A1B9A, 0xFFAD1457, 0xFF6D4C41, 0xFFFFCC80).map { it.toInt() }
 
 private class View {
     var zoom = 1f; var panX = 0f; var panY = 0f; var turn = 0f
@@ -132,6 +135,14 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
     val scope = rememberCoroutineScope()
     val prefs = remember { context.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE) }
     var mode by remember { mutableStateOf(runCatching { PaintMode.valueOf(prefs.getString(MODE_PREF, null) ?: "") }.getOrDefault(PaintMode.SIMPLE)) }
+    val libraryFile = remember { BrushLibraryFile(java.io.File(context.filesDir, "brush-library.json")) }
+    var library by remember { mutableStateOf(BrushLibrary()) }
+    var libraryReady by remember { mutableStateOf(false) }
+    val librarySnackbar = remember { SnackbarHostState() }
+    LaunchedEffect(Unit) {
+        library = withContext(Dispatchers.IO) { libraryFile.load() }
+        libraryReady = true
+    }
     var painting by remember(path) { mutableStateOf<Painting?>(null) }
     var failed by remember(path) { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf<String?>(null) }
@@ -142,7 +153,7 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
     }
     BackHandler(painting == null) { onClose() }
     val p = painting
-    if (p == null) {
+    if (p == null || !libraryReady) {
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface), contentAlignment = Alignment.Center) {
             val message = failed
             if (message == null) CircularProgressIndicator()
@@ -218,10 +229,27 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
     }
 
     var tool by remember { mutableStateOf(Tool.BRUSH) }
-    var brush by remember { mutableStateOf(BrushPresets.all.first()) }
-    var colour by remember { mutableIntStateOf(0xFF000000.toInt()) }
+    var brush by remember { mutableStateOf(library.brush()) }
+    var colour by remember { mutableIntStateOf(library.colour) }
     var backColour by remember { mutableIntStateOf(0xFFFFFFFF.toInt()) }
-    val recent = remember { mutableStateListOf<Int>() }
+    val recent = remember { mutableStateListOf<Int>().also { it.addAll(library.recent) } }
+    var lastLibraryWrite by remember { mutableStateOf(library) }
+    SideEffect {
+        val next = library.used(brush, colour, recent.toList())
+        if (next != library) library = next
+        if (next != lastLibraryWrite) {
+            lastLibraryWrite = next
+            libraryFile.save(next) { error ->
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    Toast.makeText(context, "Brush library could not be saved: ${error.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+    fun selectBrush(name: String) {
+        library = library.used(brush)
+        brush = library.brush(name)
+    }
     var symmetry by remember { mutableStateOf(Symmetry()) }
     var penSeen by remember { mutableStateOf(false) }
     var penOnly by remember { mutableStateOf(false) }
@@ -421,6 +449,7 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(librarySnackbar) },
         topBar = {
             if (mode != PaintMode.FOCUS) TopAppBar(
                 title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -466,7 +495,7 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
                         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                             TextButton(onClick = { endTransform(true); sheet = Sheet.LAYERS }) { Text("Layers") }
                             TextButton(onClick = { endTransform(true); sheet = Sheet.GUIDES }, modifier = Modifier.semantics { contentDescription = "Open guides" }) { Text("Guides") }
-                            TextButton(onClick = { sheet = Sheet.BRUSH }) { Text("Brush") }
+                            TextButton(onClick = { sheet = Sheet.BRUSH }, modifier = Modifier.semantics { contentDescription = "Open brush settings" }) { Text("Brush") }
                             TextButton(onClick = { sheet = Sheet.FILTERS }) { Text("Filters") }
                             TextButton(onClick = { sheet = Sheet.IMAGE }) { Text("Image") }
                             when (tool) {
@@ -482,10 +511,10 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
                         }
                     }
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        val names = if (mode == PaintMode.SIMPLE) BrushPresets.simple else BrushPresets.all.map { it.name }
+                        val names = if (mode == PaintMode.SIMPLE) BrushPresets.simple else library.orderedBrushes.map { it.name }
                         names.forEach { n ->
                             FilterChip(brush.name == n && tool == Tool.BRUSH, {
-                                brush = BrushPresets.all.first { it.name == n }
+                                selectBrush(n)
                                 chooseTool(Tool.BRUSH)
                             }, label = { Text(n) })
                         }
@@ -788,8 +817,26 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
                         }
                         Text("Drag the handles with the Guides tool. Brush strokes follow the guides.")
                     }
-                    Sheet.COLOUR -> ColourSheet(colour, recent, { colour = it }, { setColour(it); sheet = null })
-                    Sheet.BRUSH -> BrushSheet(brush, { brush = it }, symmetry, { symmetry = it })
+                    Sheet.COLOUR -> ColourSheet(colour, recent, { colour = it }, { setColour(it); sheet = null }, library, { library = it })
+                    Sheet.BRUSH -> {
+                        BrushLibraryControls(brush, library, { library = it; if (it.lastBrush != brush.name) brush = brush.copy(name = it.lastBrush) }, onDelete = {
+                            val deleted = brush
+                            val definition = library.customs.first { it.name == deleted.name }
+                            val wasFavourite = deleted.name in library.favourites
+                            library = library.delete(deleted.name); brush = library.brush(); sheet = null
+                            scope.launch {
+                                if (librarySnackbar.showSnackbar("Deleted ${deleted.name}", "Undo") == SnackbarResult.ActionPerformed) {
+                                    if (library.customs.size < 100) {
+                                        val restored = library.saveNew(definition, deleted.name)
+                                        library = (if (wasFavourite) restored.toggleFavourite(restored.lastBrush) else restored)
+                                            .used(deleted.copy(name = restored.lastBrush))
+                                        brush = deleted.copy(name = restored.lastBrush)
+                                    } else Toast.makeText(context, "Brush library is full", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        })
+                        BrushSheet(brush, { brush = it }, symmetry, { symmetry = it })
+                    }
                     Sheet.LAYERS -> LayerSheet(p, version + frame, advanced = mode != PaintMode.SIMPLE, onChanged = { edited(); refresh() })
                     Sheet.FILTERS -> FilterSheet { f, amount ->
                         sheet = null
@@ -893,7 +940,7 @@ private fun TransformBar(scale: Float, turn: Float, onScale: (Float) -> Unit, on
 }
 
 @Composable
-private fun ColourSheet(colour: Int, recent: List<Int>, onChange: (Int) -> Unit, onDone: (Int) -> Unit) {
+private fun ColourSheet(colour: Int, recent: List<Int>, onChange: (Int) -> Unit, onDone: (Int) -> Unit, library: BrushLibrary, onLibrary: (BrushLibrary) -> Unit) {
     val start = remember { rgbToHsv(colour) }
     var hue by remember { mutableFloatStateOf(start[0]) }
     var sat by remember { mutableFloatStateOf(start[1]) }
@@ -932,15 +979,76 @@ private fun ColourSheet(colour: Int, recent: List<Int>, onChange: (Int) -> Unit,
         TextButton(onClick = { onDone(hsvToRgb(hue, sat, value)) }) { Text("Done") }
     }
     Text("Palette", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Swatches.forEach { c -> SwatchDot(c) { onDone(c) } }
-    }
+    PaletteControls(library, onLibrary, hsvToRgb(hue, sat, value), onDone)
     if (recent.isNotEmpty()) {
         Text("Recent", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             recent.forEach { c -> SwatchDot(c) { onDone(c) } }
         }
     }
+}
+
+@Composable
+private fun LibraryNameDialog(title: String, initial: String = "", onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var name by remember { mutableStateOf(initial) }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text(title) }, text = {
+        OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true)
+    }, confirmButton = {
+        TextButton(onClick = { onSave(name.trim()); onDismiss() }, enabled = name.isNotBlank()) { Text("Save") }
+    }, dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+}
+
+@Composable
+private fun BrushLibraryControls(b: BrushSettings, library: BrushLibrary, onLibrary: (BrushLibrary) -> Unit, onDelete: () -> Unit) {
+    var naming by remember { mutableStateOf<String?>(null) }
+    val custom = library.customs.any { it.name == b.name }
+    FlowRow {
+        TextButton(onClick = { onLibrary(library.used(b).toggleFavourite(b.name)) },
+            modifier = Modifier.semantics { contentDescription = "Favourite brush" }) {
+            Text(if (b.name in library.favourites) "★" else "☆")
+        }
+        TextButton(onClick = { naming = "Save as new brush" }, enabled = library.customs.size < 100) { Text("Save as new brush") }
+        if (custom) {
+            TextButton(onClick = { onLibrary(library.update(b).used(b)) }) { Text("Update") }
+            TextButton(onClick = { naming = "Rename brush" }) { Text("Rename") }
+            TextButton(onClick = onDelete) { Text("Delete") }
+        }
+    }
+    naming?.let { title ->
+        LibraryNameDialog(title, if (title == "Rename brush") b.name else "", { naming = null }) { name ->
+            onLibrary(if (title == "Rename brush") library.used(b).rename(b.name, name) else library.used(b).saveNew(b, name))
+        }
+    }
+}
+
+@Composable
+private fun PaletteControls(library: BrushLibrary, onLibrary: (BrushLibrary) -> Unit, current: Int, onPick: (Int) -> Unit) {
+    var menu by remember { mutableStateOf(false) }
+    var naming by remember { mutableStateOf<String?>(null) }
+    val palette = library.palettes.firstOrNull { it.name == library.palette } ?: library.palettes.first()
+    FlowRow {
+        Box {
+            TextButton(onClick = { menu = true }) { Text(palette.name) }
+            DropdownMenu(menu, { menu = false }) {
+                library.palettes.forEach { p -> DropdownMenuItem(text = { Text(p.name) }, onClick = { onLibrary(library.copy(palette = p.name)); menu = false }) }
+            }
+        }
+        TextButton(onClick = { onLibrary(library.addColour(current)) }, enabled = palette.colours.size < 64 && current !in palette.colours) { Text("Add current colour") }
+        TextButton(onClick = { naming = "New palette" }, enabled = library.palettes.size < 10) { Text("New palette") }
+        TextButton(onClick = { naming = "Rename palette" }) { Text("Rename palette") }
+        TextButton(onClick = { onLibrary(library.deletePalette()) }) { Text("Delete palette") }
+        TextButton(onClick = { onLibrary(library.restorePalette()) }, enabled = library.palettes.size < 10 || library.palettes.any { it.name == BrushLibrary.defaultPalette.name }) { Text("Restore default palette") }
+    }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        palette.colours.forEach { c ->
+            Box(Modifier.size(36.dp).clip(CircleShape).background(Color(c)).border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                .semantics { contentDescription = "Palette colour %08X; hold to remove".format(c) }
+                .pointerInput(c, library) { detectTapGestures(onLongPress = { onLibrary(library.removeColour(c)) }, onTap = { onPick(c) }) })
+        }
+    }
+    naming?.let { title -> LibraryNameDialog(title, if (title == "Rename palette") palette.name else "", { naming = null }) { name ->
+        onLibrary(if (title == "New palette") library.newPalette(name) else library.renamePalette(name))
+    } }
 }
 
 @Composable

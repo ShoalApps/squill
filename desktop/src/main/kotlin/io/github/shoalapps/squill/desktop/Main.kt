@@ -112,7 +112,7 @@ fun main() = application {
         DisposableEffect(model) { onDispose { model.stop() } }
         LaunchedEffect(closing, nextRoot) {
             if (closing || nextRoot != null) model.afterSaves {
-                if (closing) exitApplication()
+                if (closing) io.github.shoalapps.squill.paint.BrushLibraryFile.afterWrites { javax.swing.SwingUtilities.invokeLater { exitApplication() } }
                 else nextRoot?.let { Settings.setFolder(it); root = it; nextRoot = null }
             }
         }

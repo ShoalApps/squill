@@ -9,10 +9,45 @@ import androidx.compose.ui.test.*
 import io.github.shoalapps.squill.paint.*
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.After
+import org.junit.Rule
+import org.junit.rules.TemporaryFolder
 import java.util.concurrent.atomic.AtomicReference
 
 @OptIn(ExperimentalTestApi::class)
 class PaintingEditorTest {
+    @get:Rule val temporary = TemporaryFolder()
+    private val brushes by lazy { BrushLibraryFile(java.io.File(temporary.root, "brush-library.json")) }
+    @After fun drainBrushWrites() { brushes.load() }
+
+    @Test fun customBrushAndPaletteSurviveEditorRecreation() = runDesktopComposeUiTest(1200, 900) {
+        var generation by mutableIntStateOf(0)
+        val document = PaintingCopy(Painting.blank(64, 64))
+        setContent { MaterialTheme { key(generation) { PaintingEditor(document, {}, brushLibraryFile = brushes) } } }
+        onNodeWithText("Save brush").performClick()
+        onNodeWithText("Brush name").performTextInput("Desktop custom")
+        onNodeWithText("Save", substring = false).performClick()
+        onNodeWithContentDescription("Favourite brush").performClick()
+        onNodeWithContentDescription("Brush size").performSemanticsAction(SemanticsActions.SetProgress) { it(77f) }
+        onNodeWithContentDescription("Brush opacity").performSemanticsAction(SemanticsActions.SetProgress) { it(.6f) }
+        onNodeWithText("Colour #RRGGBB").performTextReplacement("#123456")
+        onNodeWithText("Add current").performScrollTo().performClick()
+        waitForIdle()
+        val saved = brushes.load()
+        assertEquals("Desktop custom", saved.lastBrush)
+        assertTrue("Desktop custom" in saved.favourites)
+        assertEquals(77f, saved.brush().size, 0f)
+        assertEquals(.6f, saved.brush().opacity, 0f)
+        assertEquals(0xFF123456.toInt(), saved.colour)
+        assertEquals(listOf(0xFF123456.toInt()), saved.recent)
+        assertTrue(0xFF123456.toInt() in saved.palettes.first().colours)
+        runOnIdle { generation++ }
+        waitForIdle()
+        onNodeWithText("Desktop custom").assertExists()
+        onNodeWithContentDescription("Palette colour FF123456").assertExists()
+        assertEquals("Desktop custom", brushes.load().lastBrush)
+    }
+
     @Test fun rulerConstrainsStrokesAndUnlockedTapsStayAtTheirStart() {
         val p = Painting.blank(64, 64)
         p.assistants = listOf(Ruler(0f, 32f, 64f, 32f))
@@ -49,7 +84,7 @@ class PaintingEditorTest {
 
     @Test fun paintLayersEraseUndoAndRedo() = runDesktopComposeUiTest(1200, 900) {
         val saved = AtomicReference<PaintingCopy?>()
-        setContent { MaterialTheme { PaintingEditor(PaintingCopy(Painting.blank(64, 64)), saved::set) } }
+        setContent { MaterialTheme { PaintingEditor(PaintingCopy(Painting.blank(64, 64)), saved::set, brushLibraryFile = brushes) } }
         fun settle() { Thread.sleep(200); waitForIdle() }
         fun savePause(): PaintingCopy {
             settle(); mainClock.advanceTimeBy(SAVE_AFTER_MS + 100); waitForIdle()
@@ -98,7 +133,7 @@ class PaintingEditorTest {
         var latest by mutableStateOf(false)
         val saved = AtomicReference<PaintingCopy?>()
         val initial = PaintingCopy(Painting.blank(64, 64))
-        setContent { MaterialTheme { if (open) PaintingEditor(initial, if (latest) saved::set else ({})) } }
+        setContent { MaterialTheme { if (open) PaintingEditor(initial, if (latest) saved::set else ({}), brushLibraryFile = brushes) } }
         latest = true; waitForIdle()
         mainClock.autoAdvance = false
         onNodeWithContentDescription("Painting canvas").performMouseInput {
@@ -116,7 +151,7 @@ class PaintingEditorTest {
         val kept = AtomicReference<PaintingCopy?>()
         val saved = AtomicReference<PaintingCopy?>()
         val saves = java.util.concurrent.atomic.AtomicInteger()
-        setContent { MaterialTheme { if (open) PaintingEditor(incoming, { saved.set(it); saves.incrementAndGet() }, saveFailures = failures, onConflict = kept::set) } }
+        setContent { MaterialTheme { if (open) PaintingEditor(incoming, { saved.set(it); saves.incrementAndGet() }, saveFailures = failures, onConflict = kept::set, brushLibraryFile = brushes) } }
         mainClock.autoAdvance = false
         onNodeWithContentDescription("Painting canvas").performMouseInput { moveTo(Offset(450f, 350f)); press(); release() }
         val phone = PaintingCopy(Painting.blank(64, 64).also { it.active.name = "Phone" })
@@ -135,7 +170,7 @@ class PaintingEditorTest {
     @Test fun handZoomAndReadOnlyLeavePixelsAlone() = runDesktopComposeUiTest(1200, 900) {
         val saved = AtomicReference<PaintingCopy?>()
         val copy = PaintingCopy(Painting.blank(64, 64), readOnlyReason = "Read only: unknown stack attribute")
-        setContent { MaterialTheme { PaintingEditor(copy, saved::set) } }
+        setContent { MaterialTheme { PaintingEditor(copy, saved::set, brushLibraryFile = brushes) } }
         onNodeWithText(copy.readOnlyReason!!).assertExists()
         onNodeWithText("Add").assertIsNotEnabled()
         onNodeWithContentDescription("Painting canvas").performMouseInput { moveTo(Offset(450f, 350f)); press(); moveTo(Offset(500f, 400f), 100); release(); scroll(-2f) }
@@ -146,7 +181,7 @@ class PaintingEditorTest {
     @Test fun cleanPhoneUpdateIsAdoptedWithoutSavingItAgain() = runDesktopComposeUiTest(1200, 900) {
         var incoming by mutableStateOf(PaintingCopy(Painting.blank(64, 64)))
         val saved = AtomicReference<PaintingCopy?>()
-        setContent { MaterialTheme { PaintingEditor(incoming, saved::set) } }
+        setContent { MaterialTheme { PaintingEditor(incoming, saved::set, brushLibraryFile = brushes) } }
         incoming = PaintingCopy(Painting.blank(64, 64).also { it.active.name = "Phone layer" })
         waitUntil(timeoutMillis = 5000) {
             onAllNodesWithContentDescription("Select layer Phone layer").fetchSemanticsNodes().size == 1
@@ -237,7 +272,7 @@ class PaintingEditorTest {
 
     @Test fun groupsAcceptMovedLayersAndBlockPainting() = runDesktopComposeUiTest(1200, 900) {
         val saved = AtomicReference<PaintingCopy?>()
-        setContent { MaterialTheme { PaintingEditor(PaintingCopy(Painting.blank(64, 64)), saved::set) } }
+        setContent { MaterialTheme { PaintingEditor(PaintingCopy(Painting.blank(64, 64)), saved::set, brushLibraryFile = brushes) } }
         fun settle() { Thread.sleep(200); mainClock.advanceTimeByFrame(); waitForIdle() }
         onNodeWithText("Add group").performClick(); settle()
         onNodeWithContentDescription("Select group Group 1").assertExists()

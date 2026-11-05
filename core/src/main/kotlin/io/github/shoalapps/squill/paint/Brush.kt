@@ -13,6 +13,7 @@ enum class BrushKind { PAINT, ERASE, SMUDGE, BLUR }
 enum class TipShape { ROUND, SQUARE, GRAIN, SPLATTER }
 
 /** Everything that makes one brush different from another. */
+@kotlinx.serialization.Serializable
 data class BrushSettings(
     val name: String,
     val kind: BrushKind = BrushKind.PAINT,

@@ -41,6 +41,7 @@ A layered painting studio with Simple, Advanced and Focus modes, inspired by Kri
 - Layer groups with nested ordering, isolated or pass-through blending, opacity and clipping
 - Layers with 26 blend modes, opacity, transparency lock and clipping, merged, duplicated and reordered as you like
 - A stamp brush engine with 19 presets, from ink and pencil to watercolour, smudge and blur, and controls for flow, hardness, spacing, scatter, jitter, nib shape and stabilising, with pressure and tilt
+- Save your own brushes, star favourites and keep colour palettes. Your last brush and colour are waiting next time
 - Rulers, parallel guides and 1, 2 and 3-point perspective that brush strokes follow
 - Selections by box, oval, lasso and magic wand, which limit painting, fills and filters
 - Fill, gradients, shapes, text, transform, crop, and left-right, up-down and radial symmetry
