@@ -58,6 +58,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
+import io.github.shoalapps.squill.paint.frozen
 import androidx.lifecycle.repeatOnLifecycle
 
 private fun open(context: Context, url: String) {
@@ -89,6 +90,28 @@ fun SettingsScreen(notes: io.github.shoalapps.squill.notes.NotesViewModel, onBac
     val restoreNotes = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) notes.bulk({ vault -> context.contentResolver.openInputStream(uri)!!.use { vault.importZip(it) } }) { result ->
             toast(result.fold({ if (it == 0) "No notes in that file" else "Added $it notes" }, { "That file couldn't be read" }))
+        }
+    }
+    val importKeep = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) notes.bulk({ vault ->
+            context.contentResolver.openInputStream(uri)!!.use { input ->
+                io.github.shoalapps.squill.notes.KeepImport.import(vault, input) { bytes ->
+                    val painting = io.github.shoalapps.squill.paint.OraFile.fromPicture(bytes)
+                    java.io.ByteArrayOutputStream().also { out ->
+                        io.github.shoalapps.squill.paint.OraFile.save(painting.frozen(), out)
+                    }.toByteArray()
+                }
+            }
+        }) { result ->
+            toast(result.fold({ r ->
+                listOfNotNull(
+                    "Added ${r.imported} notes",
+                    "${r.duplicates} were already here".takeIf { r.duplicates > 0 },
+                    "${r.skippedAttachments} attachments couldn't come in".takeIf { r.skippedAttachments > 0 },
+                    "${r.failed} couldn't be read".takeIf { r.failed > 0 },
+                ).joinToString(". ")
+            },
+                { "That Keep zip couldn't be read" }))
         }
     }
     val importFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -173,6 +196,11 @@ fun SettingsScreen(notes: io.github.shoalapps.squill.notes.NotesViewModel, onBac
                 headlineContent = { Text("Restore notes") },
                 supportingContent = { Text("Adds the notes in a zip beside what's here. Nothing is overwritten.") },
                 modifier = Modifier.clickable { restoreNotes.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream")) },
+            )
+            ListItem(
+                headlineContent = { Text("Google Keep") },
+                supportingContent = { Text("Download your Keep notes as a zip from Google Takeout, then open it here") },
+                modifier = Modifier.clickable { importKeep.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream")) },
             )
             ListItem(
                 headlineContent = { Text("Import a folder of notes") },

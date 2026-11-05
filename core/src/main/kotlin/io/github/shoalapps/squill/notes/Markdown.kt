@@ -13,7 +13,7 @@ sealed interface Block {
     data class Code(val language: String, val text: String, override val line: Int) : Block
     data class Table(val header: List<String>, val rows: List<List<String>>, override val line: Int) : Block
     data class Rule(override val line: Int) : Block
-    /** A drawing shown in the note: ![[Name.svg]] on a line of its own. */
+    /** A drawing or painting shown in the note: ![[Name.svg]] or ![[Name.ora]]. */
     data class Embed(val target: String, override val line: Int) : Block
 }
 
@@ -38,7 +38,7 @@ object Markdown {
     private val bullet = Regex("^(\\s*)[-*+]\\s+(.*)$")
     private val numbered = Regex("^(\\s*)(\\d{1,9})[.)]\\s+(.*)$")
     private val rule = Regex("^\\s*([-*_])(\\s*\\1){2,}\\s*$")
-    private val embed = Regex("^\\s*!\\[\\[([^\\]|]+\\.svg)(?:\\|[^\\]]*)?]]\\s*$", RegexOption.IGNORE_CASE)
+    private val embed = Regex("^\\s*!\\[\\[([^\\]|]+\\.(?:svg|ora))(?:\\|[^\\]]*)?]]\\s*$", RegexOption.IGNORE_CASE)
     private val tableDivider = Regex("^\\s*\\|?\\s*:?-+:?\\s*(\\|\\s*:?-+:?\\s*)*\\|?\\s*$")
 
     fun parse(text: String): List<Block> {

@@ -505,8 +505,8 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
 
     fun forget(peer: Peer) { peers.remove(peer.id); _peerList.value = peers.peers() }
 
-    /** Runs bulk file work (backup, import) in the queue, then reports the count. */
-    fun bulk(work: (Vault) -> Int, onDone: (Result<Int>) -> Unit) {
+    /** Runs bulk file work (backup, import) in the queue, then reports the result. */
+    fun <T> bulk(work: (Vault) -> T, onDone: (Result<T>) -> Unit) {
         viewModelScope.launch(queue) {
             val result = runCatching { work(vault) }
             runCatching { reload() }
