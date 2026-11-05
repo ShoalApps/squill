@@ -57,6 +57,7 @@ android {
 }
 
 dependencies {
+    implementation("io.github.shoalapps.common:shoal-ui:" + rootProject.file("shoal-common.version").readText().trim())
     implementation(project(":core"))
     implementation(platform("androidx.compose:compose-bom:2026.09.00"))
     implementation("androidx.compose.material3:material3")

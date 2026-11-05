@@ -1,0 +1,77 @@
+name: Follow shoal-common
+
+on:
+  schedule:
+    - cron: "7 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: follow-shoal-common
+  cancel-in-progress: false
+
+jobs:
+  follow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Find the latest shared UI version
+        id: pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "changed=false" >> "$GITHUB_OUTPUT"
+          if ! latest=$(curl -fsS --connect-timeout 10 --max-time 30 https://shoalapps.github.io/shoal-common/latest.txt 2>/dev/null); then
+            exit 0
+          fi
+          # Only immutable shoal-common release coordinates are accepted from the network.
+          if [[ ! "$latest" =~ ^1\.0\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Invalid shoal-common version" >&2
+            exit 1
+          fi
+          ours=$(cat shoal-common.version)
+          if [ "$latest" = "$ours" ]; then exit 0; fi
+          printf '%s\n' "$latest" > shoal-common.version
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "version=$latest" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v6
+        if: steps.pin.outputs.changed == 'true'
+        with:
+          distribution: temurin
+          java-version: 17
+      # As in build.yml, use the runner's Android SDK.
+      - uses: gradle/actions/setup-gradle@v6
+        if: steps.pin.outputs.changed == 'true'
+
+      - name: Build app and UI tests; run unit tests
+        if: steps.pin.outputs.changed == 'true'
+        run: ./gradlew testDebugUnitTest :core:test :desktop:test assembleDebug assembleDebugAndroidTest --stacktrace
+
+      - name: Commit and publish
+        if: steps.pin.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.pin.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add -- shoal-common.version
+          git commit -m "Follow shoal-common $VERSION"
+          if ! git push origin HEAD:main; then
+            git fetch origin main
+            git rebase origin/main
+            # Revalidate the rebased tree before the single push retry.
+            ./gradlew testDebugUnitTest :core:test :desktop:test assembleDebug assembleDebugAndroidTest --stacktrace
+            git push origin HEAD:main
+          fi
+          gh workflow run build.yml --ref main

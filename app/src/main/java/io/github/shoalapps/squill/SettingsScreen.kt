@@ -11,7 +11,6 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -22,15 +21,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -38,7 +34,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -51,7 +46,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -60,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import io.github.shoalapps.squill.paint.frozen
 import androidx.lifecycle.repeatOnLifecycle
+import io.github.shoalapps.common.ui.SupportCard
 
 private fun open(context: Context, url: String) {
     runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri())) }
@@ -197,7 +192,13 @@ fun SettingsScreen(notes: io.github.shoalapps.squill.notes.NotesViewModel, onBac
         },
     ) { padding ->
         Column(Modifier.padding(padding).verticalScroll(rememberScrollState())) {
-            SupportCard { open(context, "https://liberapay.com/ShoalApps") }
+            SupportCard(
+                title = "Support Shoal",
+                description = "Free, open source and ad-free. Donations on Liberapay keep it going.",
+                donateLabel = "Donate",
+                onDonateLabel = "Donate on Liberapay",
+                heartIcon = Icons.Default.Favorite,
+            ) { open(context, "https://liberapay.com/ShoalApps") }
             ListItem(
                 headlineContent = { Text("Snooze for") },
                 supportingContent = {
@@ -469,31 +470,4 @@ private fun PairDialog(notes: io.github.shoalapps.squill.notes.NotesViewModel, o
         },
         dismissButton = { TextButton(onClick = onClose) { Text("Cancel") } },
     )
-}
-
-/** Supporting Shoal, at the top of Settings as in every Shoal app. */
-@Composable
-private fun SupportCard(onDonate: () -> Unit) {
-    val c = MaterialTheme.colorScheme
-    Surface(
-        shape = RoundedCornerShape(28.dp), color = c.primary,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-    ) {
-        Row(
-            Modifier.clickable(onClickLabel = "Donate on Liberapay", onClick = onDonate)
-                .background(Brush.linearGradient(listOf(c.primary, c.tertiary))).padding(20.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Default.Favorite, null, Modifier.size(36.dp), tint = c.onPrimary)
-            Spacer(Modifier.width(16.dp))
-            Column(Modifier.weight(1f)) {
-                Text("Support Shoal", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = c.onPrimary)
-                Text("Free, open source and ad-free. Donations on Liberapay keep it going.", style = MaterialTheme.typography.bodyMedium, color = c.onPrimary.copy(alpha = .9f))
-                Button(
-                    onClick = onDonate, modifier = Modifier.padding(top = 12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = c.onPrimary, contentColor = c.primary),
-                ) { Text("Donate", fontWeight = FontWeight.Bold) }
-            }
-        }
-    }
 }
