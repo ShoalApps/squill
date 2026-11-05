@@ -46,6 +46,26 @@ class OraFileTest {
             assertArrayEquals(a.pixels, b.pixels)
         }
     }
+    @Test fun assistantsRoundTripStayEditableAndAreNotExtras() {
+        val p = Painting.blank(7, 5)
+        p.assistants = listOf(Ruler(1f, 2f, 6f, 2f), Parallel(0f, 1f, 7f, 1f), Perspective(listOf(Point(3f, 2f))))
+        p.assistantsOn = false
+        val signature = PaintingCopy(p).signature()
+        val loaded = OraFile.load(save(PaintingCopy(p, mapOf(AssistantFile.NAME to "stale".toByteArray()))))
+        assertEquals(p.assistants, loaded.painting.assistants)
+        assertNull(loaded.readOnlyReason); assertFalse(AssistantFile.NAME in loaded.extras)
+        assertTrue(loaded.painting.assistantsOn)
+        assertEquals(signature, loaded.signature())
+        loaded.painting.assistants = emptyList()
+        assertNotEquals(signature, loaded.signature())
+        assertFalse(AssistantFile.NAME in readZip(ByteArrayInputStream(save(loaded))))
+    }
+
+    @Test fun oldFilesHaveNoAssistants() {
+        val loaded = OraFile.load(phoneFile().first)
+        assertTrue(loaded.painting.assistants.isEmpty()); assertTrue(loaded.painting.assistantsOn)
+    }
+
     @Test fun phoneToDesktopToPhoneKeepsEveryLayerAndExtension() {
         val (bytes, expected) = phoneFile()
         val loaded = OraFile.load(bytes); assertNull(loaded.readOnlyReason); same(expected, loaded.painting)

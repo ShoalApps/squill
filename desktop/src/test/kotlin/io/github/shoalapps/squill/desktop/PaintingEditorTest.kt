@@ -13,6 +13,40 @@ import java.util.concurrent.atomic.AtomicReference
 
 @OptIn(ExperimentalTestApi::class)
 class PaintingEditorTest {
+    @Test fun rulerConstrainsStrokesAndUnlockedTapsStayAtTheirStart() {
+        val p = Painting.blank(64, 64)
+        p.assistants = listOf(Ruler(0f, 32f, 64f, 32f))
+        val session = PaintingSession(PaintingCopy(p)) { _, _, _, _, _ -> }
+        val brush = BrushPresets.all.first { it.name == "Pixel" }.copy(size = 3f)
+        session.submit {
+            begin(10f, 10f, 1f, brush, -1, 5f)
+            point(50f, 50f, 1f); end(50f, 50f, 1f)
+            begin(20f, 10f, 1f, brush, -1, 5f)
+            point(22f, 11f, 1f); end(22f, 11f, 1f)
+        }
+        val saved = AtomicReference<PaintingCopy?>()
+        val done = java.util.concurrent.CountDownLatch(1)
+        session.leave({ saved.set(it); done.countDown() }, true)
+        assertTrue(done.await(10, java.util.concurrent.TimeUnit.SECONDS))
+        val pixels = saved.get()!!.painting.active.pixels
+        assertTrue(pixels[32 * 64 + 30] != 0)
+        assertTrue(pixels[10 * 64 + 20] != 0)
+        assertTrue(pixels.indices.filter { pixels[it] != 0 }.all { it / 64 in 30..33 || (it / 64 in 8..11 && it % 64 in 18..21) })
+    }
+
+    @Test fun leavingBeforeDirectionLockKeepsTheTap() {
+        val p = Painting.blank(64, 64).also { it.assistants = listOf(Ruler(0f, 32f, 64f, 32f)) }
+        val session = PaintingSession(PaintingCopy(p)) { _, _, _, _, _ -> }
+        val brush = BrushPresets.all.first { it.name == "Pixel" }.copy(size = 3f)
+        session.submit { begin(10f, 10f, 1f, brush, -1) }
+        val saved = AtomicReference<PaintingCopy?>()
+        val done = java.util.concurrent.CountDownLatch(1)
+        session.leave({ saved.set(it); done.countDown() }, true)
+        assertTrue(done.await(10, java.util.concurrent.TimeUnit.SECONDS))
+        assertTrue(saved.get()!!.painting.active.pixels[10 * 64 + 10] != 0)
+        assertEquals(0, saved.get()!!.painting.active.pixels[32 * 64 + 10])
+    }
+
     @Test fun paintLayersEraseUndoAndRedo() = runDesktopComposeUiTest(1200, 900) {
         val saved = AtomicReference<PaintingCopy?>()
         setContent { MaterialTheme { PaintingEditor(PaintingCopy(Painting.blank(64, 64)), saved::set) } }

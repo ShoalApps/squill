@@ -105,10 +105,10 @@ enum class PaintMode(val label: String) { SIMPLE("Simple"), ADVANCED("Advanced")
 
 private enum class Tool(val label: String) {
     BRUSH("Brush"), PICK("Pick colour"), FILL("Fill"), GRADIENT("Gradient"), LINE("Line"), RECT("Rectangle"), ELLIPSE("Ellipse"),
-    SELECT_RECT("Select box"), SELECT_ELLIPSE("Select oval"), LASSO("Lasso"), WAND("Magic wand"), TRANSFORM("Transform"), TEXT("Text"), CROP("Crop"), VIEW("Move view"),
+    SELECT_RECT("Select box"), SELECT_ELLIPSE("Select oval"), LASSO("Lasso"), WAND("Magic wand"), TRANSFORM("Transform"), GUIDES("Guides"), TEXT("Text"), CROP("Crop"), VIEW("Move view"),
 }
 
-private enum class Sheet { LAYERS, BRUSH, COLOUR, FILTERS, IMAGE }
+private enum class Sheet { GUIDES, LAYERS, BRUSH, COLOUR, FILTERS, IMAGE }
 
 private enum class Route { STROKE, TOOL, VIEW }
 
@@ -344,7 +344,7 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
     } else listOf(a, Offset(b.x, a.y), b, Offset(a.x, b.y), a)
 
     fun finishTool(t: Tool, a: Offset, b: Offset, trail: List<Offset>) {
-        if (t !in listOf(Tool.PICK, Tool.SELECT_RECT, Tool.SELECT_ELLIPSE, Tool.LASSO, Tool.WAND, Tool.VIEW) && !paintingAllowed()) return
+        if (t !in listOf(Tool.PICK, Tool.SELECT_RECT, Tool.SELECT_ELLIPSE, Tool.LASSO, Tool.WAND, Tool.VIEW, Tool.GUIDES) && !paintingAllowed()) return
         val w = p.width; val h = p.height
         val tap = hypot(b.x - a.x, b.y - a.y) < 6f / view.zoom
         when (t) {
@@ -450,10 +450,11 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
                     }
                     if (mode == PaintMode.ADVANCED) {
                         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Tool.entries.forEach { t -> FilterChip(tool == t, { chooseTool(t) }, label = { Text(t.label) }) }
+                            Tool.entries.forEach { t -> FilterChip(tool == t, { chooseTool(t) }, label = { Text(t.label) }, modifier = Modifier.semantics { contentDescription = "${t.label} tool" }) }
                         }
                         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                             TextButton(onClick = { endTransform(true); sheet = Sheet.LAYERS }) { Text("Layers") }
+                            TextButton(onClick = { endTransform(true); sheet = Sheet.GUIDES }, modifier = Modifier.semantics { contentDescription = "Open guides" }) { Text("Guides") }
                             TextButton(onClick = { sheet = Sheet.BRUSH }) { Text("Brush") }
                             TextButton(onClick = { sheet = Sheet.FILTERS }) { Text("Filters") }
                             TextButton(onClick = { sheet = Sheet.IMAGE }) { Text("Image") }
@@ -574,8 +575,17 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
                                     val use = if (eraserEnd) BrushPresets.all.first { it.name == "Eraser" }.copy(size = brush.size) else brush
                                     val under = p.clipAlphaFor(a)
                                     val painter = StrokePainter(a.pixels, p.width, p.height, use, colour, p.selection, a.alphaLock, symmetry, under, seed = version + 11)
+                                    // Only where they can be seen and switched off.
+                                    val snap = if (mode == PaintMode.ADVANCED && p.assistantsOn && p.assistants.isNotEmpty()) AssistantSnap(p.assistants, 14.dp.toPx() / view.zoom) else null
+                                    fun add(x: Float, y: Float, pressure: Float, tilt: Float = 0f, orientation: Float = 0f): Rect {
+                                        if (snap == null) return painter.add(x, y, pressure, tilt, orientation)
+                                        val points = snap.feed(x, y)
+                                        var area = Rect.EMPTY
+                                        for (i in points.indices step 2) area = area.union(painter.add(points[i], points[i + 1], pressure, tilt, orientation))
+                                        return area
+                                    }
                                     val start = view.toCanvas(down.position.x, down.position.y)
-                                    refresh(painter.add(start.x, start.y, pressureOf(down.pressure, down.type)))
+                                    refresh(add(start.x, start.y, pressureOf(down.pressure, down.type)))
                                     var last = start
                                     var cancelled = false
                                     while (true) {
@@ -598,21 +608,22 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
                                             val shiftY = c.position.y - me.y
                                             for (h in 0 until me.historySize) {
                                                 val q = view.toCanvas(me.getHistoricalX(h) + shiftX, me.getHistoricalY(h) + shiftY)
-                                                area = area.union(painter.add(q.x, q.y, pressureOf(me.getHistoricalPressure(h), c.type), me.getHistoricalAxisValue(MotionEvent.AXIS_TILT, h), me.getHistoricalOrientation(h)))
+                                                area = area.union(add(q.x, q.y, pressureOf(me.getHistoricalPressure(h), c.type), me.getHistoricalAxisValue(MotionEvent.AXIS_TILT, h), me.getHistoricalOrientation(h)))
                                             }
                                             val q = view.toCanvas(me.x + shiftX, me.y + shiftY)
-                                            area = area.union(painter.add(q.x, q.y, pressureOf(me.pressure, c.type), me.getAxisValue(MotionEvent.AXIS_TILT), me.orientation))
+                                            area = area.union(add(q.x, q.y, pressureOf(me.pressure, c.type), me.getAxisValue(MotionEvent.AXIS_TILT), me.orientation))
                                             last = q
                                         } else {
                                             val q = view.toCanvas(c.position.x, c.position.y)
-                                            area = painter.add(q.x, q.y, pressureOf(c.pressure, c.type))
+                                            area = add(q.x, q.y, pressureOf(c.pressure, c.type))
                                             last = q
                                         }
                                         refresh(area)
                                         c.consume()
                                     }
                                     if (!cancelled) {
-                                        refresh(painter.finish(last.x, last.y))
+                                        val end = snap?.end(last.x, last.y) ?: (last.x to last.y)
+                                        refresh(painter.finish(end.first, end.second))
                                         p.recordPixels(a, painter.changed, painter.original)
                                         edited()
                                         if (use.kind == BrushKind.PAINT) remember(colour)
@@ -621,7 +632,26 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
                                 Route.TOOL -> {
                                     val activeTool = tool
                                     val a = view.toCanvas(down.position.x, down.position.y)
-                                    if (activeTool == Tool.TRANSFORM) {
+                                    if (activeTool == Tool.GUIDES) {
+                                        val handle = if (p.assistantsOn) p.assistants.flatMapIndexed { index, guide ->
+                                            assistantHandles(guide).mapIndexed { i, point -> Triple(index, i, view.toScreen(point.x, point.y)) }
+                                        }.minByOrNull { (_, _, point) -> (point - down.position).getDistance() }
+                                            ?.takeIf { (_, _, point) -> (point - down.position).getDistance() <= 32.dp.toPx() } else null
+                                        if (handle != null) {
+                                            val limit = 20f * maxOf(p.width, p.height)
+                                            var moved = false
+                                            while (true) {
+                                                val c = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                                                val q = view.toCanvas(c.position.x, c.position.y)
+                                                p.assistants = p.assistants.mapIndexed { index, guide ->
+                                                    if (index == handle.first) guide.movedHandle(handle.second, q.x.coerceIn(-limit, limit), q.y.coerceIn(-limit, limit)) else guide
+                                                }
+                                                moved = true; frame++; c.consume()
+                                                if (!c.pressed) break
+                                            }
+                                            if (moved) edited()
+                                        }
+                                    } else if (activeTool == Tool.TRANSFORM) {
                                         if (!paintingAllowed()) return@awaitEachGesture
                                         var lastScreen = a
                                         while (true) {
@@ -684,6 +714,17 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
                         t == Tool.RECT || t == Tool.SELECT_RECT || t == Tool.CROP -> shapeOutline(pts[0], pts[1], false).zipWithNext().forEach { (a, b) -> drawLine(colourLine, s(a), s(b), 2.dp.toPx()) }
                     }
                 }
+                if (p.assistantsOn && mode == PaintMode.ADVANCED) {
+                    val length = 50f * maxOf(p.width, p.height)
+                    p.assistants.forEach { guide ->
+                        assistantLines(guide, length).forEach { (a, b) ->
+                            drawLine(Color(0x882962FF), view.toScreen(a.x, a.y), view.toScreen(b.x, b.y), 1.dp.toPx())
+                        }
+                        if (tool == Tool.GUIDES) assistantHandles(guide).forEach { h ->
+                            drawCircle(Color(0x882962FF), 8.dp.toPx(), view.toScreen(h.x, h.y))
+                        }
+                    }
+                }
                 if (symmetry.mirrorX) drawLine(Color(0x882962FF), view.toScreen(p.width / 2f, 0f), view.toScreen(p.width / 2f, p.height.toFloat()), 1.dp.toPx())
                 if (symmetry.mirrorY) drawLine(Color(0x882962FF), view.toScreen(0f, p.height / 2f), view.toScreen(p.width.toFloat(), p.height / 2f), 1.dp.toPx())
                 drawCircle(Color.Transparent, 0f, style = DrawStroke(0f))
@@ -711,6 +752,32 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
         ModalBottomSheet(onDismissRequest = { sheet = null }) {
             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
                 when (which) {
+                    Sheet.GUIDES -> {
+                        // Painting is mutable; observe edits and switch changes while the sheet is open.
+                        (version + frame).let { }
+                        Text("Guides", style = MaterialTheme.typography.titleMedium)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Switch(p.assistantsOn, { p.assistantsOn = it; frame++ }, modifier = Modifier.semantics { contentDescription = "Use guides" })
+                            Text("Use guides")
+                        }
+                        FlowRow {
+                            listOf("Add ruler" to 0, "Add parallel" to -1, "Add 1-point" to 1, "Add 2-point" to 2, "Add 3-point" to 3).forEach { (label, kind) ->
+                                TextButton(onClick = {
+                                    p.assistants = p.assistants + defaultAssistant(kind, p.width, p.height)
+                                    chooseTool(Tool.GUIDES); sheet = null; edited(); frame++
+                                }, enabled = p.assistants.size < MAX_ASSISTANTS) { Text(label) }
+                            }
+                        }
+                        p.assistants.forEachIndexed { index, guide ->
+                            val name = assistantName(guide)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(name, Modifier.weight(1f))
+                                TextButton(onClick = { p.assistants = p.assistants.filterIndexed { i, _ -> i != index }; edited(); frame++ },
+                                    modifier = Modifier.semantics { contentDescription = "Delete $name ${index + 1}" }) { Text("Delete") }
+                            }
+                        }
+                        Text("Drag the handles with the Guides tool. Brush strokes follow the guides.")
+                    }
                     Sheet.COLOUR -> ColourSheet(colour, recent, { colour = it }, { setColour(it); sheet = null })
                     Sheet.BRUSH -> BrushSheet(brush, { brush = it }, symmetry, { symmetry = it })
                     Sheet.LAYERS -> LayerSheet(p, version + frame, advanced = mode != PaintMode.SIMPLE, onChanged = { edited(); refresh() })

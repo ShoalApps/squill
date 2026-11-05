@@ -28,7 +28,7 @@ private class NodeState(val node: Node) {
 private sealed interface Step {
     val bytes: Long
     class Pixels(val layer: Layer, val rect: Rect, var data: IntArray) : Step { override val bytes get() = data.size * 4L }
-    class Whole(val width: Int, val height: Int, val state: NodeState, val active: Long, val selection: ByteArray?) : Step {
+    class Whole(val width: Int, val height: Int, val state: NodeState, val active: Long, val selection: ByteArray?, var assistants: List<Assistant>? = null) : Step {
         override val bytes get() = state.arrays().distinct().sumOf { it.size * 4L } + (selection?.size?.toLong() ?: 0L)
     }
 }
@@ -48,6 +48,8 @@ class Painting(var width: Int, var height: Int, var background: Int = 0xFFFFFFFF
     private fun groupCount(node: Node): Int = if (node is Layer) 0 else 1 + (node as Group).children.sumOf { groupCount(it) }
     var activeId = 0L
     var nextId = 1L
+    var assistants: List<Assistant> = emptyList()
+    var assistantsOn: Boolean = true
     var selection: ByteArray? = null
     val activeNode: Node get() = find(activeId)?.takeUnless { it === root } ?: layers.lastOrNull() ?: root
     val active: Layer get() {
@@ -98,6 +100,8 @@ class Painting(var width: Int, var height: Int, var background: Int = 0xFFFFFFFF
             parent.children[parent.children.indexOf(g)] = l; activeId = l.id }
     }
     private fun capture() = Step.Whole(width, height, NodeState(root), activeId, selection)
+    /** Guides aren't undo steps of their own, so undoing a layer change keeps them. Only a step that moved them restores them. */
+    private fun guidesMove() { (undo.lastOrNull() as? Step.Whole)?.assistants = assistants }
     private fun push(step: Step) {
         undo.addLast(step); redo.clear()
         var total = undo.sumOf { it.bytes }
@@ -125,7 +129,7 @@ class Painting(var width: Int, var height: Int, var background: Int = 0xFFFFFFFF
             }
             Step.Pixels(step.layer, r, back)
         }
-        is Step.Whole -> { val back = capture(); width = step.width; height = step.height; step.state.restore(); activeId = step.active; selection = step.selection; back }
+        is Step.Whole -> { val back = capture(); width = step.width; height = step.height; step.state.restore(); activeId = step.active; selection = step.selection; step.assistants?.let { back.assistants = assistants; assistants = it }; back }
     }
     fun undo(): Boolean { val s = undo.removeLastOrNull() ?: return false; redo.addLast(applyStep(s)); return true }
     fun redo(): Boolean { val s = redo.removeLastOrNull() ?: return false; undo.addLast(applyStep(s)); return true }
@@ -220,6 +224,7 @@ class Painting(var width: Int, var height: Int, var background: Int = 0xFFFFFFFF
         p.root.id = root.id; p.root.name = root.name; p.root.visible = root.visible; p.root.opacity = root.opacity
         p.root.blend = root.blend; p.root.clipped = root.clipped; p.root.passThrough = root.passThrough
         p.root.children.addAll(root.children.map { clone(it, copyPixels, false) }); p.activeId = activeId; p.nextId = nextId
+        p.assistants = assistants.map { if (it is Perspective) it.copy(points = it.points.toList()) else it }; p.assistantsOn = assistantsOn
     }
     fun duplicateActive() {
         if (!canDuplicateActive) return
@@ -270,11 +275,12 @@ class Painting(var width: Int, var height: Int, var background: Int = 0xFFFFFFFF
         fun flipped(src: IntArray) = IntArray(src.size).also { out ->
             for (y in 0 until height) for (x in 0 until width) out[if (horizontal) y * width + width - 1 - x else (height - 1 - y) * width + x] = src[y * width + x]
         }
-        if (allLayers) { layers.forEach { it.pixels = flipped(it.pixels) }; selection = null } else active.pixels = flipped(active.pixels)
+        if (allLayers) { guidesMove(); assistants = assistants.map { it.mapHandles { p -> if (horizontal) Point(width - p.x, p.y) else Point(p.x, height - p.y) } }; layers.forEach { it.pixels = flipped(it.pixels) }; selection = null } else active.pixels = flipped(active.pixels)
     } }
 
     /** Turns the whole canvas a quarter turn, swapping width and height. */
     fun rotate90(clockwise: Boolean) = change {
+        guidesMove()
         val w = width; val h = height
         layers.forEach { l ->
             val out = IntArray(w * h)
@@ -284,12 +290,14 @@ class Painting(var width: Int, var height: Int, var background: Int = 0xFFFFFFFF
             }
             l.pixels = out
         }
+        assistants = assistants.map { it.mapHandles { p -> if (clockwise) Point(h - p.y, p.x) else Point(p.y, w - p.x) } }
         width = h; height = w
         selection = null
     }
 
     /** Crops or extends the canvas. [left] and [top] are where the old (0, 0) lands. */
     fun resizeCanvas(newW: Int, newH: Int, left: Int = 0, top: Int = 0) = change {
+        guidesMove()
         val w = width; val h = height
         layers.forEach { l ->
             val out = IntArray(newW * newH)
@@ -302,6 +310,7 @@ class Painting(var width: Int, var height: Int, var background: Int = 0xFFFFFFFF
             }
             l.pixels = out
         }
+        assistants = assistants.map { it.mapHandles { p -> Point(p.x + left, p.y + top) } }
         width = newW; height = newH
         selection = null
     }

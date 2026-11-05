@@ -40,12 +40,13 @@ A layered painting studio with Simple, Advanced and Focus modes, inspired by Kri
 - Layer groups with nested ordering, isolated or pass-through blending, opacity and clipping
 - Layers with 26 blend modes, opacity, transparency lock and clipping, merged, duplicated and reordered as you like
 - A stamp brush engine with 19 presets, from ink and pencil to watercolour, smudge and blur, and controls for flow, hardness, spacing, scatter, jitter, nib shape and stabilising, with pressure and tilt
+- Rulers, parallel guides and 1, 2 and 3-point perspective that brush strokes follow
 - Selections by box, oval, lasso and magic wand, which limit painting, fills and filters
 - Fill, gradients, shapes, text, transform, crop, and left-right, up-down and radial symmetry
 - 17 filters, a colour picker with palette and recent colours, and a view you can pan, pinch and turn
 - Saves as OpenRaster (.ora), the open layered format Krita can open, and as PNG and JPEG. Opens pictures, and a Krita file's flattened image
 
-Not everything in Krita is here: there are no filter masks, vector layers, animation timeline, perspective assistants, CMYK or high bit-depth colour, or plugins.
+Not everything in Krita is here: there are no filter masks, vector layers, animation timeline, CMYK or high bit-depth colour, or plugins.
 
 ## Documents and slides
 

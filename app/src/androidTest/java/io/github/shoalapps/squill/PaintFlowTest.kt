@@ -104,6 +104,20 @@ class PaintFlowTest {
         waitFor { saved().layers.size == 2 }
     }
 
+    @Test fun rulerGuidesBrushStrokesAlongTheCanvasMiddle() {
+        open(advanced = true)
+        rule.onNodeWithContentDescription("Open guides").performScrollTo().performClick()
+        rule.onNodeWithText("Add ruler").performClick()
+        // There is also a Brush sheet button; this selects the tool chip.
+        rule.onNodeWithContentDescription("Brush tool").performScrollTo().performClick()
+        canvas().performTouchInput { swipe(Offset(width * .3f, height * .3f), Offset(width * .7f, height * .7f), 400) }
+        waitFor { val p = saved(); p.assistants.size == 1 && p.active.pixels.any { alphaOf(it) > 0 } }
+        val p = saved()
+        val ys = p.active.pixels.indices.filter { alphaOf(p.active.pixels[it]) > 0 }.map { it / p.width }
+        assertTrue(ys.max() - ys.min() <= 10 + 4)
+        assertEquals(p.height / 2f, (ys.min() + ys.max()) / 2f, 2f)
+    }
+
     @Test fun theFillToolFloods() {
         open(advanced = true)
         rule.onNodeWithText("Fill").performScrollTo().performClick()

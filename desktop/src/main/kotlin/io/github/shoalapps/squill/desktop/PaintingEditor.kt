@@ -29,6 +29,8 @@ internal class PaintingSession(initial: PaintingCopy, private val publish: (Pain
     private var document = initial
     private val p get() = document.painting
     private var stroke: StrokePainter? = null
+    private var snap: AssistantSnap? = null
+    private var lastPressure = 1f
     private var pending = Rect.EMPTY
     private var lastFrame = 0L
     private var revision = 0L
@@ -63,23 +65,27 @@ internal class PaintingSession(initial: PaintingCopy, private val publish: (Pain
         layers.forEach { it.pixels = it.pixels.copyOf() }
         if (redo) redo() else undo()
     }
-    fun begin(x: Float, y: Float, pressure: Float, brush: BrushSettings, colour: Int) {
+    fun begin(x: Float, y: Float, pressure: Float, brush: BrushSettings, colour: Int, lockDistance: Float = 14f) {
         if (document.readOnlyReason != null || !p.canPaint) return
         val a = p.active
         a.pixels = a.pixels.copyOf()
         val base = p.clipAlphaFor(a)
         stroke = StrokePainter(a.pixels, p.width, p.height, brush, colour, p.selection, a.alphaLock, clipAlpha = base)
+        snap = if (p.assistantsOn && p.assistants.isNotEmpty()) AssistantSnap(p.assistants, lockDistance) else null
         point(x, y, pressure)
     }
     fun point(x: Float, y: Float, pressure: Float) { stroke?.let {
-        pending = pending.union(it.add(x, y, pressure))
+        lastPressure = pressure
+        val points = snap?.feed(x, y) ?: floatArrayOf(x, y)
+        for (i in points.indices step 2) pending = pending.union(it.add(points[i], points[i + 1], pressure))
         val now = System.nanoTime()
         if (queued.get() <= 1 && now - lastFrame >= 16_000_000L) {
             refresh(pending, false); pending = Rect.EMPTY; lastFrame = now
         }
     } }
     fun end(x: Float, y: Float, pressure: Float) { stroke?.let {
-        it.finish(x, y, pressure); p.recordPixels(p.active, it.changed, it.original); stroke = null
+        val at = snap?.end(x, y) ?: (x to y)
+        it.finish(at.first, at.second, pressure); p.recordPixels(p.active, it.changed, it.original); stroke = null; snap = null
         revision++
         pending = Rect.EMPTY; refresh(it.changed)
     } ?: run { revision++; refresh() } } // The press counted as an edit, so a refused stroke must still settle it or autosave waits forever.
@@ -88,7 +94,11 @@ internal class PaintingSession(initial: PaintingCopy, private val publish: (Pain
         val finished = java.util.concurrent.CompletableFuture<PaintingCopy?>()
         worker.execute {
             try {
-                stroke?.let { p.recordPixels(p.active, it.changed, it.original); stroke = null; revision++ }
+                stroke?.let { painter ->
+                    // Closing before direction lock still leaves the tap at the stroke's start.
+                    snap?.takeUnless { it.locked }?.end(0f, 0f)?.let { at -> painter.finish(at.first, at.second, lastPressure) }
+                    p.recordPixels(p.active, painter.changed, painter.original); stroke = null; snap = null; revision++
+                }
                 val copy = if (dirty && document.readOnlyReason == null) snapshot() else null
                 finished.complete(copy)
                 if (enqueue == null && copy != null) save(copy)
@@ -123,6 +133,7 @@ internal fun PaintingCopy.signature(): String {
         }
         digest.update(buffer.array(), 0, buffer.position())
     }
+    text(AssistantFile.write(painting.assistants))
     painting.root.children.forEach(::node)
     extras.toSortedMap().forEach { (name, value) -> text(name); bytes(value) }
     return digest.digest().joinToString("") { "%02x".format(it) }
@@ -180,6 +191,7 @@ fun PaintingEditor(document: PaintingCopy, onSave: (PaintingCopy) -> Unit, modif
     var brushSize by remember { mutableFloatStateOf(10f) }
     var opacity by remember { mutableFloatStateOf(1f) }
     var eraser by remember { mutableStateOf(false) }
+    var editGuides by remember { mutableStateOf(false) }
     var hand by remember { mutableStateOf(false) }
     var zoom by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
@@ -207,6 +219,7 @@ fun PaintingEditor(document: PaintingCopy, onSave: (PaintingCopy) -> Unit, modif
                 } }
             }
             FilterChip(eraser, { eraser = !eraser }, { Text("Eraser") }, enabled = !readOnly)
+            FilterChip(editGuides, { editGuides = !editGuides }, { Text("Edit guides") }, enabled = !readOnly)
             FilterChip(hand, { hand = !hand }, { Text("Hand") })
             TextButton({ history(false) }, enabled = canUndo && !dragging && !readOnly) { Text("Undo") }
             TextButton({ history(true) }, enabled = canRedo && !dragging && !readOnly) { Text("Redo") }
@@ -231,7 +244,11 @@ fun PaintingEditor(document: PaintingCopy, onSave: (PaintingCopy) -> Unit, modif
                             if (event.type != PointerEventType.Press) continue
                             focus.requestFocus()
                             val move = hand || event.keyboardModifiers.isAltPressed
-                            val paint = !move && !readOnly && copy.painting.canPaint
+                            val guideHandle = if (!move && editGuides && !readOnly && copy.painting.assistantsOn) copy.painting.assistants.flatMapIndexed { index, guide ->
+                                assistantHandles(guide).mapIndexed { i, p -> Triple(index, i, Offset(p.x, p.y) * zoom + pan) }
+                            }.minByOrNull { (_, _, p) -> (p - down.position).getDistance() }
+                                ?.takeIf { (_, _, p) -> (p - down.position).getDistance() <= 12f } else null
+                            val paint = !move && !editGuides && !readOnly && copy.painting.canPaint
                             fun pressure(c: PointerInputChange) = if (c.type == PointerType.Stylus || c.type == PointerType.Eraser) c.pressure.coerceIn(0f, 1f) else 1f
                             fun world(c: PointerInputChange) = (c.position - pan) / zoom
                             var last = down
@@ -240,23 +257,39 @@ fun PaintingEditor(document: PaintingCopy, onSave: (PaintingCopy) -> Unit, modif
                                 val settings = brush.copy(size = brushSize, opacity = opacity, kind = if (eraser || down.type == PointerType.Eraser) BrushKind.ERASE else brush.kind)
                                 val ink = colour.removePrefix("#").takeIf { it.length == 6 }?.toLongOrNull(16)?.toInt()?.or(0xFF000000.toInt()) ?: 0xFF000000.toInt()
                                 val at = world(down); val force = pressure(down)
-                                session.submit { begin(at.x, at.y, force, settings, ink) }
+                                val lockDistance = 14f / zoom
+                                session.submit { begin(at.x, at.y, force, settings, ink, lockDistance) }
                             }
+                            if (guideHandle != null) dragging = true
                             down.consume()
                             try {
                                 while (true) {
                                     val c = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
                                     if (move) pan += c.position - last.position
+                                    else if (guideHandle != null && c.position != last.position) {
+                                        val at = world(c); val limit = 20f * maxOf(copy.painting.width, copy.painting.height)
+                                        val x = at.x.coerceIn(-limit, limit); val y = at.y.coerceIn(-limit, limit)
+                                        edit { assistants = assistants.mapIndexed { index, guide -> if (index == guideHandle.first) guide.movedHandle(guideHandle.second, x, y) else guide } }
+                                    }
                                     else if (paint && c.position != last.position) { val at = world(c); val force = pressure(c); session.submit { point(at.x, at.y, force) } }
                                     last = c; c.consume(); if (!c.pressed) break
                                 }
                             } finally {
+                                if (guideHandle != null) dragging = false
                                 if (paint) { val at = world(last); val force = pressure(last); session.submit { end(at.x, at.y, force) }; dragging = false }
                             }
                         }
                     }
                 }) {
-                image?.let { bitmap -> withTransform({ translate(pan.x, pan.y); scale(zoom, zoom, Offset.Zero) }) { drawImage(bitmap) } }
+                image?.let { bitmap -> withTransform({ translate(pan.x, pan.y); scale(zoom, zoom, Offset.Zero) }) {
+                    drawImage(bitmap)
+                    if (copy.painting.assistantsOn) copy.painting.assistants.forEach { guide ->
+                        assistantLines(guide, 50f * maxOf(copy.painting.width, copy.painting.height)).forEach { (a, b) ->
+                            drawLine(Color(0x882962FF), Offset(a.x, a.y), Offset(b.x, b.y), 1.dp.toPx() / zoom)
+                        }
+                        if (editGuides) assistantHandles(guide).forEach { p -> drawCircle(Color(0x882962FF), 8.dp.toPx() / zoom, Offset(p.x, p.y)) }
+                    }
+                } }
             }
             Column(Modifier.width(230.dp).fillMaxHeight().verticalScroll(rememberScrollState()).padding(8.dp)) {
                 Text("Layers")
@@ -314,6 +347,23 @@ fun PaintingEditor(document: PaintingCopy, onSave: (PaintingCopy) -> Unit, modif
                     DropdownMenu(blendMenu, { blendMenu = false }) { Blend.entries.forEach { blend ->
                         DropdownMenuItem({ Text(blend.label) }, { edit { change { this.activeNode.blend = blend; if (blend != Blend.NORMAL) (activeNode as? Group)?.passThrough = false } }; blendMenu = false })
                     } }
+                }
+                Text("Guides")
+                Row {
+                    Checkbox(copy.painting.assistantsOn, { value -> edit { assistantsOn = value } }, enabled = !readOnly && !dragging,
+                        modifier = Modifier.semantics { contentDescription = "Use guides" })
+                    Text("Use guides")
+                }
+                listOf("Add ruler" to 0, "Add parallel" to -1, "Add 1-point" to 1, "Add 2-point" to 2, "Add 3-point" to 3).forEach { (label, kind) ->
+                    TextButton({ edit { assistants = assistants + defaultAssistant(kind, width, height) }; editGuides = true },
+                        enabled = !readOnly && !dragging && copy.painting.assistants.size < MAX_ASSISTANTS) { Text(label) }
+                }
+                copy.painting.assistants.forEachIndexed { index, guide ->
+                    Row {
+                        Text(assistantName(guide), Modifier.weight(1f))
+                        TextButton({ edit { assistants = assistants.filterIndexed { i, _ -> i != index } } }, enabled = !readOnly && !dragging,
+                            modifier = Modifier.semantics { contentDescription = "Delete ${assistantName(guide)} ${index + 1}" }) { Text("Delete") }
+                    }
                 }
             }
         }

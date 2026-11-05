@@ -53,6 +53,7 @@ object OraFile {
                 put(src, png(l.pixels, copy.width, copy.height))
                 src
             }
+            if (copy.painting.assistants.isNotEmpty()) put(AssistantFile.NAME, AssistantFile.write(copy.painting.assistants).toByteArray())
             put("stack.xml", OraStack.write(copy.width, copy.height, entries).toByteArray())
             put("mergedimage.png", png(merged, copy.width, copy.height))
             val full = Bitmap.createBitmap(merged, copy.width, copy.height, Bitmap.Config.ARGB_8888)
@@ -95,6 +96,7 @@ object OraFile {
             }
             pixels
         }
+        p.assistants = files[AssistantFile.NAME]?.let { AssistantFile.parse(it.toString(Charsets.UTF_8)) }.orEmpty()
         return p
     }
 

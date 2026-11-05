@@ -89,7 +89,8 @@ object OraFile {
             decodedEntries[pixels] = e
             pixels
         }
-        val used = parsed.entries.map { it.src }.toSet() + setOf("mimetype", "stack.xml", "mergedimage.png", "Thumbnails/thumbnail.png")
+        p.assistants = files[AssistantFile.NAME]?.let { AssistantFile.parse(it.toString(Charsets.UTF_8)) }.orEmpty()
+        val used = parsed.entries.map { it.src }.toSet() + setOf("mimetype", "stack.xml", "mergedimage.png", "Thumbnails/thumbnail.png", AssistantFile.NAME)
         return PaintingCopy(p, files.filterKeys { it !in used }, reason, bytes,
             p.layers.mapNotNull { layer -> decodedEntries[layer.pixels]?.let { layer.id to it.src } }.toMap(), if (reason != null) files["mergedimage.png"] else null)
     }
@@ -103,7 +104,7 @@ object OraFile {
             }
             put("mimetype", "image/openraster".toByteArray(), true)
             // Retain existing source paths, including references an extension might use.
-            val usedNames = (copy.extras.keys + setOf("mimetype", "stack.xml", "mergedimage.png", "Thumbnails/thumbnail.png")).toMutableSet()
+            val usedNames = (copy.extras.keys + setOf("mimetype", "stack.xml", "mergedimage.png", "Thumbnails/thumbnail.png", AssistantFile.NAME)).toMutableSet()
             val reserved = copy.sources.values.toSet()
             val indices = p.layers.withIndex().associate { it.value.id to it.index }
             val entries = p.toOra { l ->
@@ -128,7 +129,8 @@ object OraFile {
                 surface.makeImageSnapshot().use { it.encodeToData(EncodedImageFormat.PNG)!!.use { data -> data.bytes } }
             }
             put("Thumbnails/thumbnail.png", thumbnail)
-            copy.extras.forEach { (name, bytes) -> put(name, bytes) }
+            if (p.assistants.isNotEmpty()) put(AssistantFile.NAME, AssistantFile.write(p.assistants).toByteArray())
+            copy.extras.filterKeys { it != AssistantFile.NAME }.forEach { (name, bytes) -> put(name, bytes) }
         }
     }
 }
