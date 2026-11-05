@@ -201,7 +201,7 @@ private fun NotesPage(model: Model, library: Library, open: String?, onOpen: (St
             when {
                 open == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Pick a note, or start a new one", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 open.endsWith(".svg") -> library.sketches.firstOrNull { it.path == open }?.let { s ->
-                    Viewer(s.title, "Draw and edit this in Squill on your phone or tablet.") { SketchPane(s.sketch, Modifier.fillMaxSize()) }
+                    Viewer(s.title, null) { androidx.compose.runtime.key(s.path) { SketchEditor(s.sketch, { model.saveSketch(s.path, it) }, Modifier.fillMaxSize()) } }
                 }
                 open.endsWith(".deck") -> library.decks.firstOrNull { it.path == open }?.let { d ->
                     Viewer(d.title, null) { androidx.compose.runtime.key(d.path) { DeckEditor(d.deck, { model.saveDeck(d.path, it) }, Modifier.fillMaxSize()) } }

@@ -213,6 +213,8 @@ class Model(val root: File, private val hosting: Boolean = true, private val dev
         if (updated != note.body) vault.save(fromPath, updated, note.pinned, note.colour)
     }
 
+    fun saveSketch(path: String, sketch: Sketch) = act<Unit> { if (vault.exists(path)) vault.saveSketch(path, sketch) }
+
     fun saveDeck(path: String, deck: io.github.shoalapps.squill.notes.Deck) = act<Unit> { if (vault.exists(path)) vault.saveDeck(path, deck) }
 
     fun saveNow(path: String, body: String, pinned: Boolean, colour: String?) {
