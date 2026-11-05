@@ -41,7 +41,7 @@ class KeepImportTest {
             "title":"A note", "textContent":"Hello\nworld", "isPinned":true, "color":"RED",
             "labels":[{"name":"My label"},{"name":"旅行"},{"name":"123"}],
             "userEditedTimestampUsec":1700000000123000, "unknown":{"future":true}
-        }""", "one.json" to "{}"))
+        }""", "one.json" to """{"isPinned":false}"""))
         assertEquals(KeepImport.Result(2, 0, 0, 0), result)
         val note = vault.read("A note.md")
         assertEquals("Hello\nworld\n\n#My_label #旅行 #tag_123", note.body)
@@ -100,7 +100,7 @@ class KeepImportTest {
 
     @Test fun sizeLimitsDoNotStopTheNextNote() {
         val vault = Vault(temp.newFolder())
-        val result = run(vault, zip("big.json" to " ".repeat(2 * 1024 * 1024 + 1), "deep.json" to ("[".repeat(200) + "0" + "]".repeat(200)), "fine.json" to "{}"))
+        val result = run(vault, zip("big.json" to " ".repeat(2 * 1024 * 1024 + 1), "deep.json" to ("[".repeat(200) + "0" + "]".repeat(200)), "fine.json" to """{"isPinned":false}"""))
         assertEquals(2, result.failed)
         assertEquals(1, result.imported)
     }
@@ -147,7 +147,7 @@ class KeepImportTest {
         val root = temp.newFolder()
         java.io.File(root, LockedNotes.ALL_NOTES_KEY).apply { parentFile.mkdirs(); writeText("locked") }
         val vault = Vault(root)
-        assertEquals(1, run(vault, zip("note.json" to "{}" )).failed)
+        assertEquals(1, run(vault, zip("note.json" to """{"isPinned":false}""" )).failed)
         assertTrue(vault.notes().isEmpty())
     }
 
@@ -155,6 +155,8 @@ class KeepImportTest {
         val vault = Vault(temp.newFolder("other"))
         val result = run(vault, zip(
             "Takeout/Fit/daily.json" to """{"steps": 1000}""",
+            "Takeout/Photos/IMG.json" to """{"title": "IMG.jpg", "photoTakenTime": {}}""",
+            "empty.json" to "{}",
             "Takeout/Keep/Real.json" to """{"title": "Real", "textContent": "words", "userEditedTimestampUsec": 1700000000000000}""",
         ))
         assertEquals(1, result.imported)

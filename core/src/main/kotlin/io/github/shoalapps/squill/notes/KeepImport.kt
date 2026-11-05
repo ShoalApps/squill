@@ -24,6 +24,8 @@ object KeepImport {
     private const val ZIP_LIMIT = 512 * 1024 * 1024
     private const val TOTAL_LIMIT = 256 * 1024 * 1024
     private const val ENTRY_LIMIT = 20_000
+    /** Fields only Keep writes. "title" isn't one: Photos and YouTube exports have those too. */
+    private val KEEP_FIELDS = listOf("textContent", "listContent", "attachments", "labels", "isTrashed", "isPinned", "isArchived", "userEditedTimestampUsec", "createdTimestampUsec")
 
     /** [picture] converts image bytes to OpenRaster; the JVM default supports PNG without AWT. */
     fun import(vault: Vault, input: InputStream, picture: (ByteArray) -> ByteArray = ::pngPainting): Result {
@@ -82,7 +84,7 @@ object KeepImport {
                             ?: error("That isn't a note")
                         if (note.flag("isTrashed")) continue
                         // A Takeout zip can hold other Google products' JSON too, which isn't a note.
-                        if (listOf("textContent", "listContent", "userEditedTimestampUsec").none { it in note }) continue
+                        if (KEEP_FIELDS.none { it in note }) continue
                         val title = note.text("title").ifBlank { path.substringAfterLast('/').dropLast(5) }.ifBlank { "Untitled" }
                         val folder = if (note.flag("isArchived")) "Archive" else ""
                         val parts = mutableListOf<String>()
