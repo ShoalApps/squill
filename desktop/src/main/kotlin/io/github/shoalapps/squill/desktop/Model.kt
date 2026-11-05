@@ -233,6 +233,23 @@ class Model(val root: File, private val hosting: Boolean = true, private val dev
 
     private fun saving(block: () -> Unit) = act<Unit>(onFailed = { _saveFailures.value++ }) { block() }
 
+    /** Queued immediately on leaving; the painting worker supplies the final snapshot. */
+    fun savePaintingOnLeave(path: String, snapshot: () -> PaintingCopy?) = saving {
+        snapshot()?.let { copy -> if (vault.exists(path)) vault.writeFile(path) { OraFile.save(copy, it) } }
+    }
+
+    /** Runs after the editor's final writes, without blocking the window. */
+    fun afterSaves(onDone: () -> Unit) { worker.execute { javax.swing.SwingUtilities.invokeLater(onDone) } }
+
+    fun savePainting(path: String, copy: PaintingCopy) = saving {
+        if (vault.exists(path)) vault.writeFile(path) { OraFile.save(copy, it) }
+    }
+
+    fun keepOtherPainting(path: String, copy: PaintingCopy) = act<Unit> {
+        val (folder, name) = besideIt(path)
+        vault.createFile(folder, name, "ora") { output -> copy.originalBytes?.let { output.write(it) } ?: OraFile.save(copy, output) }
+    }
+
     fun saveSketch(path: String, sketch: Sketch) = saving { if (vault.exists(path)) vault.saveSketch(path, sketch) }
 
     private fun besideIt(path: String) = path.substringBeforeLast('/', "") to path.substringAfterLast('/').substringBeforeLast('.') + " (from another device)"

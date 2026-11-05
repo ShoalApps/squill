@@ -100,13 +100,22 @@ private object Settings {
 
 fun main() = application {
     var root by remember { mutableStateOf(Settings.folder()) }
+    var closing by remember { mutableStateOf(false) }
+    var nextRoot by remember { mutableStateOf<File?>(null) }
     val state = rememberWindowState(width = 1280.dp, height = 820.dp)
-    Window(onCloseRequest = ::exitApplication, title = "Squill", state = state) {
+    Window(onCloseRequest = { closing = true }, title = "Squill", state = state) {
         val model = remember(root) { Model(root).also { it.start() } }
         DisposableEffect(model) { onDispose { model.stop() } }
-        App(model, onChooseFolder = {
+        LaunchedEffect(closing, nextRoot) {
+            if (closing || nextRoot != null) model.afterSaves {
+                if (closing) exitApplication()
+                else nextRoot?.let { Settings.setFolder(it); root = it; nextRoot = null }
+            }
+        }
+        if (closing || nextRoot != null) Text("Saving…")
+        else App(model, onChooseFolder = {
             val chooser = javax.swing.JFileChooser(root).apply { fileSelectionMode = javax.swing.JFileChooser.DIRECTORIES_ONLY; dialogTitle = "Choose a folder for your notes" }
-            if (chooser.showOpenDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION) { Settings.setFolder(chooser.selectedFile); root = chooser.selectedFile }
+            if (chooser.showOpenDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION) { nextRoot = chooser.selectedFile }
         })
     }
 }
@@ -208,10 +217,20 @@ private fun NotesPage(model: Model, library: Library, open: String?, onOpen: (St
                     Viewer(d.title, null) { androidx.compose.runtime.key(d.path) { DeckEditor(d.deck, { model.saveDeck(d.path, it) }, Modifier.fillMaxSize(), model.saveFailures.collectAsState().value, { model.keepOtherDeck(d.path, it) }) } }
                 }
                 open.endsWith(".ora") -> paintings.firstOrNull { it.path == open }?.let { p ->
-                    val picture = remember(p.modified, p.size) { paintingPicture(model.vault.readBytes(p.path)) }
-                    Viewer(p.title, "Paint in Squill on your phone or tablet, or open this .ora file in Krita.") {
-                        if (picture != null) Image(picture, p.title, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
-                        else Text("That painting couldn't be shown.")
+                    androidx.compose.runtime.key(p.path) {
+                        val loaded by androidx.compose.runtime.produceState<Result<PaintingCopy>?>(null, p.modified, p.size) {
+                            value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                runCatching { OraFile.load(model.vault.readBytes(p.path)) }
+                            }
+                        }
+                        Viewer(p.title, null) {
+                            val result = loaded
+                            if (result == null) Text("Opening painting…")
+                            else result.fold(
+                                { PaintingEditor(it, { copy -> model.savePainting(p.path, copy) }, Modifier.fillMaxSize(), model.saveFailures.collectAsState().value, { copy -> model.keepOtherPainting(p.path, copy) }, { snapshot -> model.savePaintingOnLeave(p.path, snapshot) }) },
+                                { Text("That painting couldn't be opened: ${it.message}") }
+                            )
+                        }
                     }
                 }
                 else -> androidx.compose.runtime.key(open) { NoteEditor(model, library, open, onOpen) { folder = it; tag = null; query = "" } }

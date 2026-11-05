@@ -58,7 +58,7 @@ Not everything in Krita is here: there are no layer groups, filter masks, vector
 ## Sync and your computer
 
 - [Squill for Linux, Windows and Mac](https://github.com/ShoalApps/squill/releases/tag/desktop-latest) keeps your notes as ordinary files in a folder, so other Markdown apps can open it too
-- Write and read notes there with a live preview, backlinks, the graph, tags and search. Draw there with a mouse or tablet, with an eraser, selection, and undo. Edit slide text, speaker notes and order too. Paintings and the layout of slides are viewed there and edited on your phone
+- Write and read notes there with a live preview, backlinks, the graph, tags and search. Draw there with a mouse or tablet, with an eraser, selection, and undo. Edit slide text, speaker notes and order too. Paint there too, with brushes, an eraser, layers and blend modes, though the advanced painting tools are on the phone. The layout of slides is edited on your phone
 - Pair your phone with a one-time code. They then sync directly over your own network, encrypted, with no account and no cloud
 - If both change the same note before syncing, both versions are kept. Deletions go to the trash on the other device. Reminders sync too, and only the phone rings
 
