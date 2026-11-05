@@ -183,29 +183,21 @@ class Painting(var width: Int, var height: Int, var background: Int = 0xFFFFFFFF
             }
         }
     }
-    /** Stroke clipping uses the nearest unclipped sibling, regardless of its visibility or opacity. */
-    fun clipAlphaFor(layer: Layer): IntArray? {
-        if (!layer.clipped) return null
-        val siblings = parentOf(layer)?.children ?: return null
-        return when (val base = siblings.take(siblings.indexOf(layer)).lastOrNull { !it.clipped }) {
-            is Layer -> base.pixels
-            is Group -> renderGroup(base)
-            else -> null
-        }
-    }
     fun flattened(): IntArray = IntArray(width * height).also { render(Rect(0, 0, width, height), it) }
-    val canMergeDown: Boolean get() { val a = activeNode; val siblings = parentOf(a)?.children ?: return false; return a is Layer && siblings.getOrNull(siblings.indexOf(a) - 1) is Layer }
+    /** Hidden layers aren't merged: nothing could keep how the picture looks and also keep their pixels. */
+    val canMergeDown: Boolean get() { val a = activeNode; val siblings = parentOf(a)?.children ?: return false; val under = siblings.getOrNull(siblings.indexOf(a) - 1); return a is Layer && under is Layer && a.visible && under.visible }
     fun mergeDown() {
         if (!canMergeDown) return
         val top = activeNode as Layer; val siblings = parentOf(top)!!.children; val at = siblings.indexOf(top); val under = siblings[at - 1] as Layer
         change {
-            val merged = under.pixels.copyOf()
+            // The result stands alone at full opacity, or the top layer would fade with the one below.
+            val merged = if (under.opacity >= 1f) under.pixels.copyOf() else IntArray(under.pixels.size) { val v = under.pixels[it]; (v and 0xFFFFFF) or (clamp8(alphaOf(v) * under.opacity) shl 24) }
             for (i in merged.indices) {
                 var src = top.pixels[i]; if (alphaOf(src) == 0) continue
                 if (top.clipped) src = (src and 0xFFFFFF) or ((alphaOf(src) * alphaOf(under.pixels[i]) / 255) shl 24)
                 merged[i] = composite(merged[i], src, top.blend, top.opacity)
             }
-            under.pixels = merged; siblings.removeAt(at); activeId = under.id
+            under.pixels = merged; under.opacity = 1f; siblings.removeAt(at); activeId = under.id
         }
     }
     fun flatten() = change { val l = Layer(nextId++, "Background", flattened()); root.children.clear(); root.children.add(l); activeId = l.id }

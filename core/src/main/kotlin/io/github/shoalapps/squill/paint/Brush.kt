@@ -120,7 +120,6 @@ class StrokePainter(
     private val alphaLock: Boolean = false,
     private val symmetry: Symmetry = Symmetry(),
     /** Only for a clipped layer: the pixels whose alpha this layer stays inside. */
-    private val clipAlpha: IntArray? = null,
     seed: Int = 11,
 ) {
     private val before = pixels.copyOf()
@@ -284,7 +283,6 @@ class StrokePainter(
         val out = composite(base, colour, brush.blend, strength)
         var alpha = alphaOf(out)
         if (alphaLock) alpha = alphaOf(base)
-        clipAlpha?.let { alpha = min(alpha, alphaOf(it[i])) }
         pixels[i] = (out and 0xFFFFFF) or (alpha shl 24)
     }
 

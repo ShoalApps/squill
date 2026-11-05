@@ -69,8 +69,7 @@ internal class PaintingSession(initial: PaintingCopy, private val publish: (Pain
         if (document.readOnlyReason != null || !p.canPaint) return
         val a = p.active
         a.pixels = a.pixels.copyOf()
-        val base = p.clipAlphaFor(a)
-        stroke = StrokePainter(a.pixels, p.width, p.height, brush, colour, p.selection, a.alphaLock, clipAlpha = base)
+        stroke = StrokePainter(a.pixels, p.width, p.height, brush, colour, p.selection, a.alphaLock)
         snap = if (p.assistantsOn && p.assistants.isNotEmpty()) AssistantSnap(p.assistants, lockDistance) else null
         point(x, y, pressure)
     }

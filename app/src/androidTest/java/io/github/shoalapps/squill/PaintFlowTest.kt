@@ -200,4 +200,27 @@ class PaintFlowTest {
         rule.onNodeWithText("Layer 1", substring = false).assertExists()
         assertTrue(!(saved().root.children.single() as io.github.shoalapps.squill.paint.Group).visible)
     }
+
+    @Test fun leavingDuringATransformKeepsTheArtwork() {
+        open(advanced = true)
+        paint()
+        waitFor { saved().layers[0].pixels.any { alphaOf(it) > 0 } }
+        val painted = saved().layers[0].pixels.count { alphaOf(it) > 0 }
+        paint()
+        rule.onNodeWithText("Transform").performScrollTo().performClick()
+        rule.waitForIdle()
+        back()
+        rule.waitForIdle()
+        waitFor { saved().layers[0].pixels.count { alphaOf(it) > 0 } >= painted }
+    }
+
+    @Test fun aPaintingWithAMissingLayerIsRefusedNotBlanked() {
+        val out = ByteArrayOutputStream()
+        val zip = java.util.zip.ZipOutputStream(out)
+        zip.putNextEntry(java.util.zip.ZipEntry("stack.xml"))
+        zip.write("<image w=\"4\" h=\"4\"><stack><layer name=\"a\" src=\"data/gone.png\"/></stack></image>".toByteArray())
+        zip.closeEntry(); zip.close()
+        val refused = runCatching { OraFile.load(out.toByteArray()) }
+        assertTrue(refused.exceptionOrNull() is io.github.shoalapps.squill.notes.OfficeException)
+    }
 }

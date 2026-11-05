@@ -71,8 +71,6 @@ class GroupsTest {
         assertArrayEquals(intArrayOf(0x800000FF.toInt(), 0), p.flattened())
         val clipped = layer(p, "clipped", red).also { it.clipped = true }
         p.root.children.add(clipped)
-        assertArrayEquals(a.pixels, p.clipAlphaFor(clipped))
-        assertNull(p.clipAlphaFor(a))
         base.children.clear()
         assertArrayEquals(intArrayOf(0, 0), p.flattened())
     }
@@ -83,7 +81,7 @@ class GroupsTest {
         val child = layer(p, "clipped without base", blue).also { it.clipped = true }
         val g = group(p, "g", child)
         p.root.children.addAll(listOf(group(p, "empty"), g))
-        assertEquals(blue, p.flattened()[0]); assertNull(p.clipAlphaFor(child))
+        assertEquals(blue, p.flattened()[0])
         child.visible = false
         assertEquals(red, p.flattened()[0])
     }
@@ -255,5 +253,45 @@ class GroupsTest {
         val failure = runCatching { OraStack.parse(xml(10000).toByteArray()) }.exceptionOrNull()
         assertTrue(failure is IllegalArgumentException)
         assertEquals("That painting's groups are nested too deeply to open", failure?.message)
+    }
+
+    @Test fun aStrokeOnAClippedLayerIsOnlyClippedOnce() {
+        val p = Painting(40, 40, 0)
+        val base = Layer(p.nextId++, "base", IntArray(40 * 40) { 0x80FF0000.toInt() }, visible = false)
+        val clipped = Layer(p.nextId++, "clipped", IntArray(40 * 40), clipped = true)
+        p.root.children.addAll(listOf(base, clipped))
+        val brush = BrushSettings("hard", size = 12f, hardness = 1f, pressureSize = false, stabiliser = 0f)
+        StrokePainter(clipped.pixels, 40, 40, brush, 0xFF0000FF.toInt()).apply { add(20f, 20f); finish(20f, 20f) }
+        val free = IntArray(40 * 40)
+        StrokePainter(free, 40, 40, brush, 0xFF0000FF.toInt()).apply { add(20f, 20f); finish(20f, 20f) }
+        // The layer holds the stroke as painted, and what's seen is clipped exactly once, by the hidden base's half alpha.
+        assertArrayEquals(free, clipped.pixels)
+        val middle = 20 * 40 + 20
+        assertTrue(alphaOf(free[middle]) > 0)
+        assertEquals(alphaOf(free[middle]) * 128 / 255, alphaOf(p.flattened()[middle]))
+    }
+
+    @Test fun mergingDownKeepsTheLook() {
+        val p = Painting.blank(1, 1)
+        val under = p.active
+        under.pixels[0] = red; under.opacity = .5f
+        val top = Layer(p.nextId++, "top", intArrayOf(blue))
+        p.root.children.add(top); p.activeId = top.id
+        val before = p.flattened()[0]
+        p.mergeDown()
+        assertEquals(1, p.layers.size)
+        assertEquals(1f, p.layers[0].opacity)
+        assertEquals(before, p.flattened()[0])
+        p.undo()
+        assertEquals(.5f, under.opacity)
+    }
+
+    @Test fun hiddenLayersDoNotMergeDown() {
+        val p = Painting.blank(1, 1)
+        val top = Layer(p.nextId++, "top", intArrayOf(blue))
+        p.root.children.add(top); p.activeId = top.id
+        assertTrue(p.canMergeDown)
+        top.visible = false; assertFalse(p.canMergeDown)
+        top.visible = true; p.layers[0].visible = false; assertFalse(p.canMergeDown)
     }
 }

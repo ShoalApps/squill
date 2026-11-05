@@ -83,7 +83,8 @@ object OraFile {
         if (parsed.width !in 1..Painting.MAX_SIDE || parsed.height !in 1..Painting.MAX_SIDE) throw OfficeException("That picture is too big to open")
         val p = OraStack.toPainting(parsed) { e ->
             val pixels = IntArray(parsed.width * parsed.height)
-            files[e.src]?.let { decode(it) }?.let { bmp ->
+            // Opening it as a blank layer would let the next autosave erase that layer for good.
+            (files[e.src]?.let { decode(it) } ?: throw OfficeException("A layer's picture is missing or damaged, so this painting can't be opened")).let { bmp ->
                 val ox = e.x; val oy = e.y
                 val row = IntArray(bmp.width)
                 for (y in 0 until bmp.height) {

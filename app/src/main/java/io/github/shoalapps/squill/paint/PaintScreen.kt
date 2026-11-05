@@ -189,7 +189,20 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
     }
     LaunchedEffect(p) { refreshAll() }
     fun edited() { version++ }
-    fun flush() { if (version != savedVersion) { savedVersion = version; vm.savePainting(path, p.frozen()) } }
+    var lifted by remember { mutableStateOf<Bitmap?>(null) }
+    var liftedOriginal by remember { mutableStateOf<IntArray?>(null) }
+    fun flush() {
+        if (version == savedVersion) return
+        savedVersion = version
+        // Mid-transform the layer has a hole where the lifted part was, so save it as it was before lifting.
+        val original = liftedOriginal
+        if (original == null) { vm.savePainting(path, p.frozen()); return }
+        val a = p.active; val holed = a.pixels
+        a.pixels = original
+        val copy = p.frozen()
+        a.pixels = holed
+        vm.savePainting(path, copy)
+    }
     LaunchedEffect(path) {
         // Saves shortly after you stop, with no need to press anything.
         while (true) {
@@ -203,7 +216,6 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
         owner.lifecycle.addObserver(observer)
         onDispose { owner.lifecycle.removeObserver(observer); flush() }
     }
-    BackHandler { onClose() }
 
     var tool by remember { mutableStateOf(Tool.BRUSH) }
     var brush by remember { mutableStateOf(BrushPresets.all.first()) }
@@ -226,8 +238,6 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
     var showBars by remember { mutableStateOf(true) }
 
     // Transform in progress: the lifted part floats above the rest until it's applied.
-    var lifted by remember { mutableStateOf<Bitmap?>(null) }
-    var liftedOriginal by remember { mutableStateOf<IntArray?>(null) }
     var tfX by remember { mutableFloatStateOf(0f) }
     var tfY by remember { mutableFloatStateOf(0f) }
     var tfScale by remember { mutableFloatStateOf(1f) }
@@ -276,6 +286,8 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
         }
         refresh()
     }
+    fun leave() { endTransform(true); onClose() }
+    BackHandler { leave() }
     fun chooseTool(t: Tool) {
         if (tool == Tool.TRANSFORM && t != Tool.TRANSFORM) endTransform(true)
         tool = t
@@ -332,8 +344,7 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
         if (!paintingAllowed()) return
         val a = p.active
         val before = a.pixels.copyOf()
-        val under = p.clipAlphaFor(a)
-        val s = StrokePainter(a.pixels, p.width, p.height, brush.copy(stabiliser = 0f), colour, p.selection, a.alphaLock, symmetry, under)
+        val s = StrokePainter(a.pixels, p.width, p.height, brush.copy(stabiliser = 0f), colour, p.selection, a.alphaLock, symmetry)
         points.forEach { s.add(it.x, it.y) }
         p.recordPixels(a, s.changed, before)
         edited(); refresh(s.changed)
@@ -413,7 +424,7 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
         topBar = {
             if (mode != PaintMode.FOCUS) TopAppBar(
                 title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                navigationIcon = { IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
+                navigationIcon = { IconButton(onClick = { leave() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
                 actions = {
                     val tick = version + frame
                     IconButton(enabled = p.canUndo && tick >= 0, onClick = ::undo) { Icon(androidx.compose.ui.res.painterResource(io.github.shoalapps.squill.R.drawable.ic_undo), contentDescription = "Undo") }
@@ -573,8 +584,7 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
                                 Route.STROKE -> {
                                     val a = p.active
                                     val use = if (eraserEnd) BrushPresets.all.first { it.name == "Eraser" }.copy(size = brush.size) else brush
-                                    val under = p.clipAlphaFor(a)
-                                    val painter = StrokePainter(a.pixels, p.width, p.height, use, colour, p.selection, a.alphaLock, symmetry, under, seed = version + 11)
+                                    val painter = StrokePainter(a.pixels, p.width, p.height, use, colour, p.selection, a.alphaLock, symmetry, seed = version + 11)
                                     // Only where they can be seen and switched off.
                                     val snap = if (mode == PaintMode.ADVANCED && p.assistantsOn && p.assistants.isNotEmpty()) AssistantSnap(p.assistants, 14.dp.toPx() / view.zoom) else null
                                     fun add(x: Float, y: Float, pressure: Float, tilt: Float = 0f, orientation: Float = 0f): Rect {
@@ -939,10 +949,10 @@ private fun SwatchDot(c: Int, onClick: () -> Unit) {
 }
 
 @Composable
-private fun Labelled(label: String, value: Float, range: ClosedFloatingPointRange<Float>, shown: String, onChange: (Float) -> Unit) {
+private fun Labelled(label: String, value: Float, range: ClosedFloatingPointRange<Float>, shown: String, onFinished: () -> Unit = {}, onChange: (Float) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(96.dp))
-        Slider(value, onChange, valueRange = range, modifier = Modifier.weight(1f))
+        Slider(value, onChange, valueRange = range, onValueChangeFinished = onFinished, modifier = Modifier.weight(1f))
         Text(shown, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(44.dp))
     }
 }
@@ -1033,8 +1043,13 @@ private fun LayerSheet(p: Painting, tick: Int, advanced: Boolean, onChanged: () 
     }
     rows(p.root, 0, renderTick)
     val a = p.activeNode
-    // A drag would otherwise record a whole-painting undo step per tick and push out older history.
-    Labelled("Opacity", a.opacity, 0f..1f, pct(a.opacity)) { a.opacity = it; done() }
+    // One undo step for the whole drag: one per tick would push out older history.
+    var opacityBefore by remember { mutableStateOf<Float?>(null) }
+    Labelled("Opacity", a.opacity, 0f..1f, pct(a.opacity), onFinished = {
+        val from = opacityBefore; val to = a.opacity
+        opacityBefore = null
+        if (from != null && from != to) { a.opacity = from; p.change { a.opacity = to }; done() }
+    }) { if (opacityBefore == null) opacityBefore = a.opacity; a.opacity = it; done() }
     if (advanced) {
         Text("Blend mode", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 8.dp))
         BlendPicker(a.blend) { blend -> p.change { a.blend = blend; if (blend != Blend.NORMAL && a is Group) a.passThrough = false }; done() }
