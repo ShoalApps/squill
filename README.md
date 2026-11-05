@@ -49,6 +49,7 @@ Not everything in Krita is here: there are no layer groups, filter masks, vector
 
 - Save any note as Word (.docx) or PDF, and open Word files as notes
 - Bring in your Google Keep notes from a Google Takeout zip, with checklists, labels and photos. No Google account is linked, and importing twice adds nothing twice
+- Bring in Evernote notebooks from .enex exports too, with formatting, checklists, tags and pictures
 - Presentations you can really edit on a phone: drag, resize and restyle text, boxes, circles, lines and pictures, with speaker notes
 - Reveal things click by click when presenting, with undo and redo throughout
 - Open and save PowerPoint (.pptx). What's on the slide travels; reveal steps stay in Squill, and imported animations and master slides don't come across

@@ -114,6 +114,39 @@ fun SettingsScreen(notes: io.github.shoalapps.squill.notes.NotesViewModel, onBac
                 { "That Keep zip couldn't be read" }))
         }
     }
+    val importEvernote = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) notes.bulk({ vault ->
+            var imported = 0; var duplicates = 0; var skipped = 0; var failed = 0
+            uris.forEach { uri ->
+                try {
+                    val name = context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                        if (cursor.moveToFirst()) cursor.getString(0) else null
+                    } ?: "Evernote.enex"
+                    require(name.endsWith(".enex", ignoreCase = true))
+                    val r = context.contentResolver.openInputStream(uri)!!.use { input ->
+                        io.github.shoalapps.squill.notes.EvernoteImport.import(vault, input, name) { bytes ->
+                            val painting = io.github.shoalapps.squill.paint.OraFile.fromPicture(bytes)
+                            java.io.ByteArrayOutputStream().also { out ->
+                                io.github.shoalapps.squill.paint.OraFile.save(painting.frozen(), out)
+                            }.toByteArray()
+                        }
+                    }
+                    imported += r.imported; duplicates += r.duplicates
+                    skipped += r.skippedAttachments; failed += r.failed
+                } catch (_: Exception) { failed++ }
+            }
+            io.github.shoalapps.squill.notes.EvernoteImport.Result(imported, duplicates, skipped, failed)
+        }) { result ->
+            toast(result.fold({ r ->
+                listOfNotNull(
+                    "Added ${r.imported} notes",
+                    "${r.duplicates} were already here".takeIf { r.duplicates > 0 },
+                    "${r.skippedAttachments} attachments couldn't come in".takeIf { r.skippedAttachments > 0 },
+                    "${r.failed} couldn't be read".takeIf { r.failed > 0 },
+                ).joinToString(". ")
+            }, { "Those Evernote files couldn't be read" }))
+        }
+    }
     val importFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) notes.bulk({ vault ->
             var count = 0
@@ -201,6 +234,11 @@ fun SettingsScreen(notes: io.github.shoalapps.squill.notes.NotesViewModel, onBac
                 headlineContent = { Text("Google Keep") },
                 supportingContent = { Text("Download your Keep notes as a zip from Google Takeout, then open it here") },
                 modifier = Modifier.clickable { importKeep.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream")) },
+            )
+            ListItem(
+                headlineContent = { Text("Evernote") },
+                supportingContent = { Text("Open your exported .enex files. Each file becomes a folder of notes.") },
+                modifier = Modifier.clickable { importEvernote.launch(arrayOf("application/enex", "application/x-evernote", "application/xml", "text/xml", "application/octet-stream")) },
             )
             ListItem(
                 headlineContent = { Text("Import a folder of notes") },

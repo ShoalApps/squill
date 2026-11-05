@@ -186,7 +186,7 @@ object KeepImport {
         }
     }
 
-    private fun pngPainting(bytes: ByteArray): ByteArray {
+    internal fun pngPainting(bytes: ByteArray): ByteArray {
         require(bytes.size >= 33 && bytes.take(8).toByteArray().contentEquals(byteArrayOf(137.toByte(), 80, 78, 71, 13, 10, 26, 10)))
         val header = java.nio.ByteBuffer.wrap(bytes)
         require(header.getInt(8) == 13 && header.getInt(12) == 0x49484452)

@@ -132,6 +132,36 @@ class PrivacyFlowTest {
         assertEquals(40, io.github.shoalapps.squill.paint.OraFile.load(vault.readBytes(embed)).width)
     }
 
+    @Test fun anEvernoteExportComesInOnThisPhonesParser() {
+        val bmp = android.graphics.Bitmap.createBitmap(40, 30, android.graphics.Bitmap.Config.ARGB_8888)
+        bmp.eraseColor(0xFF0000FF.toInt())
+        val png = java.io.ByteArrayOutputStream().also { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+        val hash = java.security.MessageDigest.getInstance("MD5").digest(png).joinToString("") { "%02x".format(it) }
+        val data = android.util.Base64.encodeToString(png, android.util.Base64.NO_WRAP)
+        val enml = """<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE en-note SYSTEM "http://xml.evernote.com/pub/enml2.dtd"><en-note><h1>Trip</h1><div>Fish&nbsp;and <b>chips</b></div><div><en-todo checked="true"/>Pack</div><div><en-todo/>Go</div><en-media type="image/png" hash="$hash"/></en-note>"""
+        val enex = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE en-export SYSTEM "http://xml.evernote.com/pub/evernote-export4.dtd">
+<en-export export-date="20240101T000000Z" application="Evernote" version="10.0">
+<note><title>Holiday</title><created>20240101T000000Z</created><updated>20240102T030405Z</updated><tag>Big trip</tag>
+<content><![CDATA[$enml]]></content>
+<resource><data encoding="base64">$data</data><mime>image/png</mime><resource-attributes><file-name>beach.png</file-name></resource-attributes></resource>
+</note></en-export>"""
+        val picture = { bytes: ByteArray ->
+            java.io.ByteArrayOutputStream().also { out ->
+                io.github.shoalapps.squill.paint.OraFile.save(io.github.shoalapps.squill.paint.OraFile.fromPicture(bytes).frozen(), out)
+            }.toByteArray()
+        }
+        val result = io.github.shoalapps.squill.notes.EvernoteImport.import(vault, enex.toByteArray().inputStream(), "Travel.enex", picture)
+        assertEquals(1, result.imported)
+        assertEquals(0, result.failed)
+        assertEquals(0, result.skippedAttachments)
+        val note = vault.read("Travel/Holiday.md")
+        assertTrue(note.body, note.body.contains("# Trip") && note.body.contains("**chips**"))
+        assertTrue(note.body, note.body.contains("- [x] Pack") && note.body.contains("- [ ] Go"))
+        assertTrue(note.body, note.body.contains("#Big_trip") && note.body.contains(".ora]]"))
+        assertEquals(1, io.github.shoalapps.squill.notes.EvernoteImport.import(vault, enex.toByteArray().inputStream(), "Travel.enex", picture).duplicates)
+    }
+
     @Test fun aPictureOpensAsAPainting() {
         val png = File(context.cacheDir, "Sunset.png")
         val bmp = android.graphics.Bitmap.createBitmap(40, 30, android.graphics.Bitmap.Config.ARGB_8888)
