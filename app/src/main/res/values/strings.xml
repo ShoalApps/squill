@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="widget_description">Your next reminders, and a button to jot one down</string>
+    <string name="note_widget_description">Pinned note or checklist</string>
 </resources>

@@ -279,6 +279,23 @@ class Vault(val root: File, historyClock: () -> Long = System::currentTimeMillis
         return read(file)
     }
 
+    /** Widget compare-and-flip: keeps the original front matter, BOM and newlines byte-for-byte.
+     * The caller serializes this with other writers, just as it does for [save].
+     */
+    fun flipWidgetTask(path: String, index: Int, fingerprint: String): Boolean {
+        if (cipher == null && File(root, LockedNotes.ALL_NOTES_KEY).exists()) return false
+        if (!path.endsWith(".md", true) || path.split('/').any { it.startsWith(".") || it.isEmpty() } || '\\' in path) return false
+        val file = at(path)
+        if (!file.isFile) return false
+        val original = loadText(file)
+        val body = NoteFile.read(original).first
+        // Only a body that's literally the end of the file can be spliced back without touching the rest.
+        if (!original.endsWith(body)) return false
+        val changed = WidgetLines.flipFingerprint(body, index, fingerprint) ?: return false
+        writeAtomically(file, original.substring(0, original.length - body.length) + changed)
+        return true
+    }
+
     private fun writeAtomically(file: File, text: String) {
         val tmp = File(file.parentFile, ".${file.name}.tmp")
         tmp.writeBytes(seal(text.toByteArray()))

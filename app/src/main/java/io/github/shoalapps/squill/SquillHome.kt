@@ -76,6 +76,14 @@ fun SquillHome(reminders: RemindersViewModel, notes: NotesViewModel) {
             notes.clearShared()
         }
     }
+    val widgetNote by notes.widgetNote.collectAsState()
+    LaunchedEffect(widgetNote) {
+        widgetNote?.let {
+            settings = false; trash = false; lockedOpen = false; tab = Tab.NOTES
+            openPath = it
+            notes.clearWidgetNote()
+        }
+    }
     val incoming by notes.incoming.collectAsState()
     LaunchedEffect(incoming) {
         incoming?.let { uri ->

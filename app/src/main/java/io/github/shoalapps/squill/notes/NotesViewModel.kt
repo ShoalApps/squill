@@ -35,7 +35,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     val encrypted: StateFlow<Boolean> = _encrypted.asStateFlow()
     val peers = PeerStore(root)
     /** Held for each file operation, so sync and saving can't touch the same file at once. */
-    private val vaultLock = Any()
+    private val vaultLock = io.github.shoalapps.squill.NoteWidgetAccess.lock
     private val deviceName: String = android.os.Build.MODEL ?: "Android"
 
     private val _syncStatus = MutableStateFlow<String?>(null)
@@ -68,6 +68,11 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     fun quick(action: String) { _quick.value = action }
     fun clearQuick() { _quick.value = null }
 
+    private val _widgetNote = MutableStateFlow<String?>(null)
+    val widgetNote: StateFlow<String?> = _widgetNote.asStateFlow()
+    fun openWidgetNote(path: String?) { _widgetNote.value = path?.takeIf(io.github.shoalapps.squill.NoteWidgetAccess::allowed) }
+    fun clearWidgetNote() { _widgetNote.value = null }
+
     private val _incoming = MutableStateFlow<android.net.Uri?>(null)
     /** A file another app asked Squill to open. */
     val incoming: StateFlow<android.net.Uri?> = _incoming.asStateFlow()
@@ -84,8 +89,18 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     private var indexWrite: kotlinx.coroutines.Job? = null
 
     init {
+        io.github.shoalapps.squill.NoteWidgetAccess.attach(vault)
+        val owner = java.lang.ref.WeakReference(this)
+        io.github.shoalapps.squill.NoteWidgetAccess.onEdit = { owner.get()?.refresh() }
+        io.github.shoalapps.squill.NoteWidgets.refresh(app)
         Store.onEdit = { syncSoon() }
         if (!allNotesKey.exists()) open()
+    }
+
+    override fun onCleared() {
+        io.github.shoalapps.squill.NoteWidgetAccess.detach(vault)
+        io.github.shoalapps.squill.NoteWidgets.refresh(getApplication())
+        super.onCleared()
     }
 
     private fun open() {
@@ -97,8 +112,10 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
                 known = saved.associateByTo(HashMap(saved.size * 2)) { it.note.path }
                 _library.value = Library(saved)
             }
-            seedOnce()
-            reload()
+            synchronized(vaultLock) {
+                seedOnce()
+                reload()
+            }
         }
     }
 
@@ -106,7 +123,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.Default) {
             val key = runCatching { PasswordKey.unlock(allNotesKey, password) }.getOrNull()
             if (key != null) {
-                vault.cipher = key
+                synchronized(vaultLock) { vault.cipher = key }
                 _needsUnlock.value = false
                 viewModelScope.launch(queue) { runCatching { synchronized(vaultLock) { vault.finishSealing() } } }
                 open()
@@ -119,7 +136,8 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     fun lockAll() {
         if (!allNotesKey.exists()) return
         viewModelScope.launch(queue) {
-            vault.cipher = null
+            synchronized(vaultLock) { vault.cipher = null }
+            io.github.shoalapps.squill.NoteWidgets.refresh(getApplication())
             known = HashMap(); knownSketches = HashMap(); knownDecks = HashMap(); knownPaintings = HashMap()
             _library.value = Library()
             _needsUnlock.value = true
@@ -220,6 +238,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     /** Seals a note and removes the ordinary copy for good: leaving it in the trash would defeat the point. */
     fun moveToLocked(path: String, onDone: () -> Unit) = act<Unit>({ onDone() }) {
         vault.moveToLocked(path, locked)
+        io.github.shoalapps.squill.NoteWidgets.movedToLocked(getApplication(), path)
         // An old list cache can contain the ordinary note's text too.
         indexWrite?.cancel()
         indexFile.delete()
@@ -257,6 +276,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Re-reads only what's changed, so saving one note in a big vault stays instant. */
     private fun reload() {
+        io.github.shoalapps.squill.NoteWidgets.refresh(getApplication())
         val stats = vault.stats()
         val seen = HashMap<String, NoteInfo>(stats.size * 2)
         val seenSketches = HashMap<String, SketchInfo>()

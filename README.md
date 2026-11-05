@@ -7,6 +7,7 @@ Notes, links and reminders, as ordinary files on your phone. A Material You note
 - Notes are plain Markdown files in folders, so they're yours: back them up as a zip that any Markdown app can open
 - Link notes with `[[double brackets]]`, follow them, see what links back, and watch it all join up in the graph
 - Rename or move a note and every link to it is updated
+- Pin a note or checklist to your home screen and tick things off right there. Locked notes stay hidden
 - Keep-style cards: pins, colours, checklists you can tick, tags and search across everything
 - Reading and writing views, a formatting bar, undo and redo, tables and code blocks
 - A note for today, a trash you can restore from, and two panes on a tablet

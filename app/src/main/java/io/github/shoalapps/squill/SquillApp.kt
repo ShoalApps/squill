@@ -13,6 +13,7 @@ class SquillApp : Application() {
     override fun onCreate() {
         super.onCreate()
         AlarmReceiver.createChannel(this)
+        NoteWidgets.refresh(this)
         // The widget shows whatever's next, so it follows every change.
         scope.launch { Store.changes.collect { runCatching { SquillWidget().updateAll(this@SquillApp) } } }
     }

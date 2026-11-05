@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity() {
         if (intent.action == Intent.ACTION_VIEW && intent.data != null) { notes.open(intent.data!!); return }
         if (intent.action == Intent.ACTION_SEND && stream != null && !isAlias) { notes.open(stream); return }
         when (intent.action) {
+            ACTION_OPEN_NOTE -> notes.openWidgetNote(intent.getStringExtra("notePath"))
             ACTION_JOT -> vm.jot("")
             ACTION_NEW_NOTE, ACTION_NEW_LIST, ACTION_NEW_DRAWING, ACTION_TODAY -> notes.quick(intent.action!!)
             Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)?.takeIf { it.isNotBlank() }?.let { text ->
@@ -60,6 +61,7 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        const val ACTION_OPEN_NOTE = "io.github.shoalapps.squill.OPEN_NOTE"
         const val ACTION_JOT = "io.github.shoalapps.squill.JOT"
         const val ACTION_NEW_NOTE = "io.github.shoalapps.squill.NEW_NOTE"
         const val ACTION_NEW_LIST = "io.github.shoalapps.squill.NEW_LIST"
