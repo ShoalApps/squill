@@ -81,7 +81,7 @@ object EvernoteImport {
                 val modified = timestamp(note.field("updated")) ?: timestamp(note.field("created"))
                 modified?.takeIf { it > 0 }?.let { vault.file(created.path).setLastModified(it) }
                 vault.createFile(".evernote-import", fingerprint, "mark") { }
-                imported++; skipped += skippedHere
+                imported++; skipped += skippedHere + Regex("<en-crypt\\b").findAll(enml).count()
             } catch (_: Exception) { made.forEach { vault.file(it).delete() }; failed++ }
         }
         return Result(imported, duplicates, skipped, failed)
@@ -150,7 +150,8 @@ object EvernoteImport {
                 val b = body(); return b.takeWhile { it == ' ' } + mark + b.trim() + mark + b.takeLastWhile { it == ' ' }
             }
             return when (n.name) {
-                "script", "style", "iframe", "object", "en-crypt" -> ""
+                "script", "style", "iframe", "object" -> ""
+                "en-crypt" -> "\n\n*Encrypted text from Evernote wasn't brought in. It's still in your Evernote account.*\n\n"
                 "en-media" -> "\n\n" + media(n.attrs["hash"].orEmpty().lowercase(Locale.ROOT)) + "\n\n"
                 "en-todo" -> "- [${if (n.attrs["checked"] == "true") "x" else " "}] "
                 // Squill folds single newlines into spaces, so separate visible lines as paragraphs.

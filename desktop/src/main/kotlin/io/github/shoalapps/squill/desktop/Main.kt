@@ -202,10 +202,10 @@ private fun NotesPage(model: Model, library: Library, open: String?, onOpen: (St
             when {
                 open == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Pick a note, or start a new one", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 open.endsWith(".svg") -> library.sketches.firstOrNull { it.path == open }?.let { s ->
-                    Viewer(s.title, null) { androidx.compose.runtime.key(s.path) { SketchEditor(s.sketch, { model.saveSketch(s.path, it) }, Modifier.fillMaxSize()) } }
+                    Viewer(s.title, null) { androidx.compose.runtime.key(s.path) { SketchEditor(s.sketch, { model.saveSketch(s.path, it) }, Modifier.fillMaxSize(), model.saveFailures.collectAsState().value, { model.keepOtherSketch(s.path, it) }) } }
                 }
                 open.endsWith(".deck") -> library.decks.firstOrNull { it.path == open }?.let { d ->
-                    Viewer(d.title, null) { androidx.compose.runtime.key(d.path) { DeckEditor(d.deck, { model.saveDeck(d.path, it) }, Modifier.fillMaxSize()) } }
+                    Viewer(d.title, null) { androidx.compose.runtime.key(d.path) { DeckEditor(d.deck, { model.saveDeck(d.path, it) }, Modifier.fillMaxSize(), model.saveFailures.collectAsState().value, { model.keepOtherDeck(d.path, it) }) } }
                 }
                 open.endsWith(".ora") -> paintings.firstOrNull { it.path == open }?.let { p ->
                     val picture = remember(p.modified, p.size) { paintingPicture(model.vault.readBytes(p.path)) }

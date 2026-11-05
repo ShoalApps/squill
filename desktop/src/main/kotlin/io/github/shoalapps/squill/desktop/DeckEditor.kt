@@ -49,22 +49,34 @@ import kotlinx.coroutines.delay
  * underneath, as when a phone syncs, is taken up unless there's something unsaved here.
  */
 @Composable
-fun DeckEditor(deck: Deck, onSave: (Deck) -> Unit, modifier: Modifier = Modifier) {
+fun DeckEditor(deck: Deck, onSave: (Deck) -> Unit, modifier: Modifier = Modifier, saveFailures: Int = 0, onConflict: (Deck) -> Unit = {}) {
     var working by remember { mutableStateOf(deck) }
     var saved by remember { mutableStateOf(deck) }
     var index by remember { mutableIntStateOf(0) }
     var undo by remember { mutableStateOf(emptyList<Deck>()) }
     val save by rememberUpdatedState(onSave)
     var seen by remember { mutableStateOf(deck) }
+    val sent = remember { mutableListOf(deck) }
     if (deck != seen) {
         seen = deck
-        if (deck != saved && working == saved) { working = deck; saved = deck; undo = emptyList() }
+        // Hearing back about an earlier save of ours isn't news.
+        if (deck !in sent) {
+            sent += deck
+            // Both changed: the other device's version is kept beside this one, not overwritten.
+            if (working != saved) onConflict(deck)
+            else { working = deck; saved = deck; undo = emptyList() }
+        }
     }
+    // A save that failed leaves changes unsaved, so leaving the editor tries again.
+    var failuresSeen by remember { mutableStateOf(saveFailures) }
+    if (saveFailures != failuresSeen) { failuresSeen = saveFailures; saved = seen }
     index = index.coerceIn(working.slides.indices)
     LaunchedEffect(working) {
         if (working == saved) return@LaunchedEffect
         delay(SAVE_AFTER_MS)
         saved = working
+        sent += working
+        if (sent.size > 8) sent.removeAt(0)
         save(working)
     }
     // Leaving straight after typing mustn't lose it.

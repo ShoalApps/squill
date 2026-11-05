@@ -61,7 +61,9 @@ fun RemindersPage(model: Model) {
         var note by remember(r) { mutableStateOf(r.note) }
         var date by remember(r) { mutableStateOf(LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(r.whenMillis), ZoneId.systemDefault()).format(dateFormat)) }
         var repeat by remember(r) { mutableStateOf(r.repeat) }
-        val time = runCatching { LocalDateTime.parse(date, dateFormat).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli() }.getOrNull()
+        val shown = remember(r) { date }
+        // The box only shows minutes, so a date nobody touched must keep its exact time, or a title edit would count as moving it.
+        val time = if (date == shown) r.whenMillis else runCatching { LocalDateTime.parse(date, dateFormat).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli() }.getOrNull()
         AlertDialog(onDismissRequest = { editing = null }, title = { Text("Reminder") }, text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(title, { title = it }, label = { Text("Title") })

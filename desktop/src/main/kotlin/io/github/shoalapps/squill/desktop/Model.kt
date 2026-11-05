@@ -197,12 +197,12 @@ class Model(val root: File, private val hosting: Boolean = true, private val dev
         _paintings.value = paintings.sortedByDescending { it.modified }
     }
 
-    private fun <T> act(onDone: (T) -> Unit = {}, block: () -> T) {
+    private fun <T> act(onDone: (T) -> Unit = {}, onFailed: () -> Unit = {}, block: () -> T) {
         worker.execute {
             runCatching { synchronized(lock) { block() } }.onSuccess {
                 runCatching { reloadNow() }
                 javax.swing.SwingUtilities.invokeLater { onDone(it) }
-            }.onFailure { _problem.value = (it as? VaultException)?.message ?: "That didn't work: ${it.message}" }
+            }.onFailure { onFailed(); _problem.value = (it as? VaultException)?.message ?: "That didn't work: ${it.message}" }
         }
     }
 
@@ -227,9 +227,22 @@ class Model(val root: File, private val hosting: Boolean = true, private val dev
         if (updated != note.body) vault.save(fromPath, updated, note.pinned, note.colour)
     }
 
-    fun saveSketch(path: String, sketch: Sketch) = act<Unit> { if (vault.exists(path)) vault.saveSketch(path, sketch) }
+    private val _saveFailures = MutableStateFlow(0)
+    /** Goes up whenever an editor's save didn't reach the disk. */
+    val saveFailures: StateFlow<Int> = _saveFailures.asStateFlow()
 
-    fun saveDeck(path: String, deck: io.github.shoalapps.squill.notes.Deck) = act<Unit> { if (vault.exists(path)) vault.saveDeck(path, deck) }
+    private fun saving(block: () -> Unit) = act<Unit>(onFailed = { _saveFailures.value++ }) { block() }
+
+    fun saveSketch(path: String, sketch: Sketch) = saving { if (vault.exists(path)) vault.saveSketch(path, sketch) }
+
+    private fun besideIt(path: String) = path.substringBeforeLast('/', "") to path.substringAfterLast('/').substringBeforeLast('.') + " (from another device)"
+
+    /** A drawing changed elsewhere while it was being edited here. Nothing's lost: it goes beside this one. */
+    fun keepOtherSketch(path: String, sketch: Sketch) = act<Unit> { val (folder, name) = besideIt(path); vault.createSketch(folder, name, sketch) }
+
+    fun keepOtherDeck(path: String, deck: Deck) = act<Unit> { val (folder, name) = besideIt(path); vault.createDeck(folder, name, deck) }
+
+    fun saveDeck(path: String, deck: Deck) = saving { if (vault.exists(path)) vault.saveDeck(path, deck) }
 
     fun saveNow(path: String, body: String, pinned: Boolean, colour: String?) {
         synchronized(lock) { if (vault.exists(path)) vault.save(path, body, pinned, colour) }

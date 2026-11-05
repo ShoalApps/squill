@@ -70,7 +70,7 @@ private val SketchColours = listOf("Black" to 0xFF1B1B1F.toInt(), "Blue" to 0xFF
 
 /** Edits the same strokes the phone uses. Each drag is one undo step. */
 @Composable
-fun SketchEditor(sketch: Sketch, onSave: (Sketch) -> Unit, modifier: Modifier = Modifier) {
+fun SketchEditor(sketch: Sketch, onSave: (Sketch) -> Unit, modifier: Modifier = Modifier, saveFailures: Int = 0, onConflict: (Sketch) -> Unit = {}) {
     var working by remember { mutableStateOf(sketch) }
     var saved by remember { mutableStateOf(sketch) }
     var seen by remember { mutableStateOf(sketch) }
@@ -78,17 +78,29 @@ fun SketchEditor(sketch: Sketch, onSave: (Sketch) -> Unit, modifier: Modifier = 
     var redo by remember { mutableStateOf(emptyList<Sketch>()) }
     var picked by remember { mutableStateOf<Int?>(null) }
     var dragging by remember { mutableStateOf(false) }
+    var failuresSeen by remember { mutableStateOf(saveFailures) }
     val save by rememberUpdatedState(onSave)
+    // What's on disk as far as this editor knows, in text: reading a drawing back can round its numbers.
+    val sent = remember { mutableListOf(sketch.toSvg()) }
     if (sketch != seen) {
         seen = sketch
-        if (sketch != saved && working == saved && !dragging) {
-            working = sketch; saved = sketch; undo = emptyList(); redo = emptyList(); picked = null
+        // Hearing back about an earlier save of ours isn't news.
+        if (sketch.toSvg() !in sent) {
+            sent += sketch.toSvg()
+            val dirty = working != saved || dragging
+            // Both changed: the other device's drawing is kept beside this one, not overwritten.
+            if (dirty) onConflict(sketch)
+            else { working = sketch; saved = sketch; undo = emptyList(); redo = emptyList(); picked = null }
         }
     }
+    // A save that failed leaves changes unsaved, so leaving the editor tries again.
+    if (saveFailures != failuresSeen) { failuresSeen = saveFailures; saved = seen }
     LaunchedEffect(working, dragging) {
         if (working == saved || dragging) return@LaunchedEffect
         delay(SAVE_AFTER_MS)
         saved = working
+        sent += working.toSvg()
+        if (sent.size > 8) sent.removeAt(0)
         save(working)
     }
     DisposableEffect(Unit) { onDispose { if (working != saved) save(working) } }

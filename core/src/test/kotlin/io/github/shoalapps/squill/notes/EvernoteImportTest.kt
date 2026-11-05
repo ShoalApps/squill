@@ -170,4 +170,13 @@ c</pre><div><code>inline</code></div><table><tr><th>A</th><th>B</th></tr><tr><td
         assertEquals(1, run(Vault(root), export(note())).failed)
         assertEquals(listOf(LockedNotes.ALL_NOTES_KEY), root.walkTopDown().filter { it.isFile }.map { it.relativeTo(root).invariantSeparatorsPath }.toList())
     }
+
+    @Test fun encryptedTextIsCountedAndMentionedInTheNote() {
+        val vault = Vault(temp.newFolder("crypt"))
+        val result = run(vault, export(note(body = "Before<en-crypt cipher=\"AES\">c2VjcmV0</en-crypt>")))
+        assertEquals(1, result.skippedAttachments)
+        val body = vault.read("Notebook/Note.md").body
+        assertTrue(body, body.contains("Before") && body.contains("wasn't brought in"))
+        assertFalse(body, body.contains("c2VjcmV0"))
+    }
 }

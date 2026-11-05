@@ -56,6 +56,42 @@ class DeckEditorTest {
         assertEquals("Quick", saved!!.slides[0].elements[0].text)
     }
 
+    @Test fun aChangeFromThePhoneDuringAnEditIsKeptBeside() = runDesktopComposeUiTest(1200, 1000) {
+        var deck by androidx.compose.runtime.mutableStateOf(start)
+        val conflicts = mutableListOf<Deck>()
+        val saves = mutableListOf<Deck>()
+        setContent { MaterialTheme { DeckEditor(deck, { saves += it; deck = it }, onConflict = { conflicts += it }) } }
+        mainClock.autoAdvance = false
+        onNodeWithContentDescription("Text 1").performTextReplacement("Mine")
+        val theirs = Deck(start.slides + Deck.contentSlide(3))
+        deck = theirs
+        mainClock.advanceTimeByFrame()
+        waitForIdle()
+        assertEquals(listOf(theirs), conflicts)
+        mainClock.advanceTimeBy(SAVE_AFTER_MS + 100)
+        waitForIdle()
+        // Hearing back about its own save isn't taken for another change.
+        assertEquals("Mine", saves.last().slides[0].elements[0].text)
+        assertEquals(1, conflicts.size)
+    }
+
+    @Test fun aFailedSaveIsTriedAgainOnLeaving() = runDesktopComposeUiTest(1200, 1000) {
+        val saves = mutableListOf<Deck>()
+        var failures by androidx.compose.runtime.mutableStateOf(0)
+        var open by androidx.compose.runtime.mutableStateOf(true)
+        setContent { MaterialTheme { if (open) DeckEditor(start, { saves += it }, saveFailures = failures) } }
+        onNodeWithContentDescription("Text 1").performTextReplacement("Precious")
+        mainClock.advanceTimeBy(SAVE_AFTER_MS + 100)
+        waitForIdle()
+        assertEquals(1, saves.size)
+        failures = 1
+        waitForIdle()
+        open = false
+        waitForIdle()
+        assertEquals(2, saves.size)
+        assertEquals("Precious", saves.last().slides[0].elements[0].text)
+    }
+
     @Test fun aChangeFromThePhoneShowsWhenNothingIsUnsaved() = runDesktopComposeUiTest(1200, 1000) {
         var deck by androidx.compose.runtime.mutableStateOf(start)
         setContent { MaterialTheme { DeckEditor(deck, {}) } }

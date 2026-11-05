@@ -41,4 +41,24 @@ class RemindersPageTest {
             assertTrue(model.vault.notes().isEmpty())
         } finally { model.stop() }
     }
+
+    @Test fun changingOnlyTheTitleKeepsAReminderDone() = runDesktopComposeUiTest(1200, 1000) {
+        val model = Model(dir.newFolder(), hosting = false)
+        model.start()
+        try {
+            val exact = 1_900_000_012_345L // Has seconds, which the box doesn't show.
+            model.reminderStore.update { it + io.github.shoalapps.squill.Reminder(5, "Tea", whenMillis = exact, done = true, rungAt = exact) }
+            model.reloadNow()
+            setContent { App(model) }
+            onNodeWithText("Reminders").performClick()
+            onNodeWithText("Edit").performClick()
+            onNodeWithText("Title").performTextReplacement("Green tea")
+            onNodeWithText("Save").performClick()
+            waitUntil(timeoutMillis = 5000) { model.reminders.value.singleOrNull()?.title == "Green tea" }
+            val saved = model.reminders.value.single()
+            assertEquals(exact, saved.whenMillis)
+            assertTrue(saved.done)
+            assertEquals(exact, saved.rungAt)
+        } finally { model.stop() }
+    }
 }
