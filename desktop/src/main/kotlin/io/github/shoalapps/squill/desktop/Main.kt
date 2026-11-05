@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -63,6 +64,8 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -79,6 +82,7 @@ import io.github.shoalapps.squill.notes.Formatting
 import io.github.shoalapps.squill.notes.Library
 import io.github.shoalapps.squill.notes.Markdown
 import io.github.shoalapps.squill.notes.Note
+import io.github.shoalapps.squill.notes.NoteHistory
 import kotlinx.coroutines.delay
 import java.awt.Desktop
 import java.awt.FileDialog
@@ -279,6 +283,11 @@ private fun NoteEditor(model: Model, library: Library, path: String, onOpen: (St
     var name by remember { mutableStateOf(note.title) }
     var view by remember { mutableStateOf(View.BOTH) }
     var pinned by remember { mutableStateOf(note.pinned) }
+    var showingHistory by remember { mutableStateOf(false) }
+    var versions by remember { mutableStateOf(emptyList<NoteHistory.Version>()) }
+    var selectedVersion by remember { mutableStateOf<NoteHistory.Version?>(null) }
+    var versionText by remember { mutableStateOf<String?>(null) }
+    var historyLoading by remember { mutableStateOf(false) }
 
     fun flush() {
         if (text.text != saved) { saved = text.text; runCatching { model.saveNow(path, saved, pinned, note.colour) } }
@@ -294,6 +303,54 @@ private fun NoteEditor(model: Model, library: Library, path: String, onOpen: (St
         val e = change(Edit(text.text, s.min, s.max))
         text = TextFieldValue(e.text, TextRange(e.start, e.end))
     }
+    if (showingHistory) AlertDialog(
+        onDismissRequest = { showingHistory = false },
+        title = { Text("Version history") },
+        text = {
+            Column(Modifier.heightIn(max = 440.dp).widthIn(min = 400.dp)) {
+                if (historyLoading) Text("Loading versions…")
+                else if (versions.isEmpty()) Text("No saved versions yet")
+                Column(Modifier.heightIn(max = 160.dp).verticalScroll(rememberScrollState())) {
+                    versions.forEachIndexed { index, version ->
+                        TextButton(
+                            modifier = Modifier.semantics { contentDescription = "Saved version ${index + 1}" },
+                            onClick = {
+                                selectedVersion = version
+                                versionText = null
+                                model.previewVersion(path, version) { if (selectedVersion == version) versionText = it }
+                            },
+                        ) {
+                            Text(java.text.DateFormat.getDateTimeInstance().format(java.util.Date(version.time)) +
+                                if (selectedVersion == version) " (selected)" else "")
+                        }
+                    }
+                }
+                if (versions.isNotEmpty()) {
+                    HorizontalDivider()
+                    if (selectedVersion == null) Text("Choose a version to preview")
+                    versionText?.let {
+                        Text(it.ifEmpty { "Empty note" }, modifier = Modifier.fillMaxWidth()
+                            .heightIn(max = 260.dp).verticalScroll(rememberScrollState())
+                            .semantics { contentDescription = "Version preview" })
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = selectedVersion != null && versionText != null, onClick = {
+                selectedVersion?.let { version ->
+                    flush()
+                    model.restoreVersion(path, version) { restored ->
+                        saved = restored.body
+                        text = TextFieldValue(restored.body)
+                        pinned = restored.pinned
+                        showingHistory = false
+                    }
+                }
+            }) { Text("Restore") }
+        },
+        dismissButton = { TextButton(onClick = { showingHistory = false }) { Text("Close") } },
+    )
     val c = MaterialTheme.colorScheme
     val resolver = library.resolver
     val known = remember(resolver) { { t: String -> resolver.resolve(t) != null } }
@@ -337,6 +394,15 @@ private fun NoteEditor(model: Model, library: Library, path: String, onOpen: (St
                 val out = d.file
                 if (out != null) runCatching { File(d.directory, out).outputStream().use { Docx.export(text.text, it) } }
             }) { Text("Word") }
+            TextButton(onClick = {
+                flush()
+                selectedVersion = null
+                versionText = null
+                versions = emptyList()
+                historyLoading = true
+                showingHistory = true
+                model.noteVersions(path) { versions = it; historyLoading = false }
+            }) { Text("Version history") }
             TextButton(onClick = { flush(); model.trash(path) { onOpen(null) } }) { Text("Delete") }
         }
         HorizontalDivider()

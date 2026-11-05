@@ -14,6 +14,7 @@ Notes, links and reminders, as ordinary files on your phone. A Material You note
 - Share text from any app to make a note of it
 - Opens fast however many notes you have: 10,000 notes open in under half a second once indexed, on the test device
 - Long-press the icon to jump straight to a new note, checklist, drawing or today's note
+- Version history: recover an earlier version of a note, even after reopening or after a sync replaced it. Kept for 30 days, on this device, and encrypted if your notes are
 
 ## Private by choice
 

@@ -56,8 +56,42 @@ class VaultException(message: String) : Exception(message)
 data class FileStat(val path: String, val modified: Long, val size: Long)
 
 /** Notes as ordinary Markdown files in ordinary folders. Everything goes through here. */
-class Vault(val root: File) {
+class Vault(val root: File, historyClock: () -> Long = System::currentTimeMillis) {
     private val trash = File(root, TRASH)
+    val history = NoteHistory(this, clock = historyClock)
+
+    internal fun readHistory(file: File): ByteArray = load(at(relative(file)))
+    internal fun writeHistory(file: File, bytes: ByteArray, maxBytes: Long) {
+        val target = at(relative(file))
+        val sealed = seal(bytes)
+        if (sealed.size.toLong() > maxBytes) return
+        val tmp = File(target.parentFile, ".${target.name}.tmp")
+        try {
+            tmp.writeBytes(sealed)
+            if (!tmp.renameTo(target)) throw VaultException("Couldn't keep that version")
+        } finally { tmp.delete() }
+    }
+
+    private fun remember(file: File, next: ByteArray, force: Boolean = false) {
+        runCatching {
+            if (file.isFile && file.extension.equals("md", true)) {
+                val old = load(file)
+                if (!old.contentEquals(next)) {
+                    val emptied = NoteFile.read(next.toString(Charsets.UTF_8)).first.isEmpty() &&
+                        NoteFile.read(old.toString(Charsets.UTF_8)).first.isNotEmpty()
+                    history.keep(relative(file), old, force || emptied)
+                }
+            }
+        }
+    }
+
+    /** Removes recovery copies before removing the ordinary note for a locked-vault move. */
+    fun moveToLocked(path: String, locked: LockedNotes) {
+        val note = read(path)
+        locked.save(note.title, note.body)
+        history.remove(path)
+        if (!at(path).delete()) throw VaultException("Couldn't remove the ordinary note")
+    }
 
     /** When set, everything written is sealed, and sealed files read back as they were. */
     @Volatile var cipher: NoteCipher? = null
@@ -76,7 +110,11 @@ class Vault(val root: File) {
         return c?.encode(data) ?: data
     }
 
-    init { root.mkdirs() }
+    init {
+        root.mkdirs()
+        // Retention uses names and sizes only, so it also works before an encrypted vault opens.
+        runCatching { history.prune() }
+    }
 
     /** Refuses any path that would escape the vault, however it's spelt. */
     private fun at(path: String): File {
@@ -121,6 +159,7 @@ class Vault(val root: File) {
         if (cipher == null && File(root, LockedNotes.ALL_NOTES_KEY).exists()) throw VaultException("Your notes are locked")
         if (cipher == null) tmp.outputStream().buffered().use(write)
         else tmp.writeBytes(seal(java.io.ByteArrayOutputStream().also(write).toByteArray()))
+        if (file.extension.equals("md", true)) runCatching { remember(file, load(tmp), force = true) }
         if (!tmp.renameTo(file)) {
             file.delete()
             if (!tmp.renameTo(file)) { tmp.delete(); throw VaultException("Couldn't save that file") }
@@ -134,6 +173,20 @@ class Vault(val root: File) {
         return path
     }
 
+    private fun moveWithHistory(from: File, to: File, paths: List<Pair<String, String>>) {
+        val moved = mutableListOf<Pair<String, String>>()
+        try {
+            paths.forEach { (old, new) ->
+                history.move(old, new)
+                moved += old to new
+            }
+            if (!from.renameTo(to)) throw VaultException("Couldn't move that file")
+        } catch (e: Exception) {
+            moved.asReversed().forEach { (old, new) -> runCatching { history.move(new, old) } }
+            throw VaultException("Couldn't move that file and its history")
+        }
+    }
+
     /** Renames or moves any file that nothing links to by name. */
     fun moveFile(path: String, folder: String, name: String): String {
         val from = at(path)
@@ -143,7 +196,7 @@ class Vault(val root: File) {
         val newPath = listOf(folder, "$clean.$extension").filter { it.isNotEmpty() }.joinToString("/")
         if (newPath == path) return path
         val to = if (newPath.equals(path, ignoreCase = true)) at(newPath) else free(folder, clean, extension)
-        if (!from.renameTo(to)) throw VaultException("Couldn't move that file")
+        moveWithHistory(from, to, listOf(path to relative(to)))
         return relative(to)
     }
 
@@ -229,6 +282,7 @@ class Vault(val root: File) {
     private fun writeAtomically(file: File, text: String) {
         val tmp = File(file.parentFile, ".${file.name}.tmp")
         tmp.writeBytes(seal(text.toByteArray()))
+        remember(file, text.toByteArray())
         if (!tmp.renameTo(file)) {
             file.delete()
             if (!tmp.renameTo(file)) { tmp.delete(); throw VaultException("Couldn't save that note") }
@@ -246,7 +300,7 @@ class Vault(val root: File) {
         val finalPath = relative(to)
         val before = notes()
         val paths = before.map { it.path }
-        if (!from.renameTo(to)) throw VaultException("Couldn't move that note")
+        moveWithHistory(from, to, listOf(path to finalPath))
         before.filter { it.path != path }.forEach { rewrite(it, path, finalPath, paths) }
         before.firstOrNull { it.path == path }?.let { rewrite(it.copy(path = finalPath), path, finalPath, paths) }
         return read(to)
@@ -275,7 +329,9 @@ class Vault(val root: File) {
         if (to.exists()) throw VaultException("There's already a folder called that")
         val before = notes()
         val paths = before.map { it.path }
-        if (!from.renameTo(to)) throw VaultException("Couldn't rename that folder")
+        val historyPaths = before.filter { it.path.startsWith("$path/") }
+            .map { it.path to (newPath + it.path.removePrefix(path)) }
+        moveWithHistory(from, to, historyPaths)
         before.forEach { note ->
             val moved = if (note.path.startsWith("$path/")) newPath + note.path.removePrefix(path) else note.path
             var body = note.body
@@ -292,7 +348,7 @@ class Vault(val root: File) {
         val from = at(path)
         val to = freeInTrash(path)
         to.parentFile?.mkdirs()
-        if (!from.renameTo(to)) throw VaultException("Couldn't delete that note")
+        moveWithHistory(from, to, listOf(path to relative(to)))
     }
 
     /** Puts a folder and everything in it in the trash. */
@@ -326,17 +382,23 @@ class Vault(val root: File) {
         at(folder).mkdirs()
         val extension = path.substringAfterLast('.')
         val to = free(folder, path.substringAfterLast('/').removeSuffix(".$extension"), extension)
-        if (!from.renameTo(to)) throw VaultException("Couldn't restore that note")
+        moveWithHistory(from, to, listOf("$TRASH/$path" to relative(to)))
         return if (extension == "md") read(to) else Note(relative(to), "", to.lastModified())
     }
 
     fun deleteForever(path: String) {
         val file = File(trash, path).canonicalFile
         if (!file.path.startsWith(trash.canonicalPath + File.separator)) throw VaultException("That isn't in the trash")
+        history.remove("$TRASH/$path")
         file.delete()
     }
 
-    fun emptyTrash() { trash.deleteRecursively() }
+    fun emptyTrash() {
+        trash.walkTopDown().filter { it.isFile }.forEach { file ->
+            history.remove(relative(file))
+        }
+        trash.deleteRecursively()
+    }
 
     /** Writes every note to a zip of plain Markdown files, which any Markdown app can open. */
     fun export(out: OutputStream): Int {
@@ -360,7 +422,7 @@ class Vault(val root: File) {
     }
 
     /** Seals or unseals every file, one at a time, so an interruption leaves everything readable. */
-    private fun convertible(): List<File> = (stats().map { at(it.path) } + listOf(at(ReminderStore.PATH)).filter { it.exists() } + (if (trash.exists()) trash.walkTopDown().filter { it.isFile && it.extension.lowercase() in KINDS }.toList() else emptyList()))
+    private fun convertible(): List<File> = (history.files() + stats().map { at(it.path) } + listOf(at(ReminderStore.PATH)).filter { it.exists() } + (if (trash.exists()) trash.walkTopDown().filter { it.isFile && it.extension.lowercase() in KINDS }.toList() else emptyList()))
 
     /**
      * Finishes a conversion a crash cut short: once unlocked, anything still plain gets sealed, and
@@ -378,6 +440,7 @@ class Vault(val root: File) {
             tmp.writeBytes(key.encode(bytes))
             if (!tmp.renameTo(file)) { file.delete(); if (!tmp.renameTo(file)) throw VaultException("Couldn't encrypt ${file.name}") }
         }
+        runCatching { history.prune() }
     }
 
     fun convert(to: NoteCipher?) = ReminderStore.transaction { convertFiles(to) }
@@ -403,6 +466,7 @@ class Vault(val root: File) {
             if (!tmp.renameTo(file)) { file.delete(); if (!tmp.renameTo(file)) throw VaultException("Couldn't convert ${file.name}") }
         }
         cipher = to
+        runCatching { history.prune() }
     }
 
     /** Adds the notes in a zip. Never overwrites: a name that's taken gets a number. Returns how many came in. */

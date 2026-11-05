@@ -138,6 +138,11 @@ fun NoteEditor(
     var reading by rememberSaveable(path) { mutableStateOf(note.body.isNotBlank()) }
     var name by remember(path) { mutableStateOf(note.title) }
     var menu by remember { mutableStateOf(false) }
+    var showingHistory by remember(path) { mutableStateOf(false) }
+    var versions by remember(path) { mutableStateOf(emptyList<NoteHistory.Version>()) }
+    var selectedVersion by remember(path) { mutableStateOf<NoteHistory.Version?>(null) }
+    var versionText by remember(path) { mutableStateOf<String?>(null) }
+    var historyLoading by remember(path) { mutableStateOf(false) }
     var choosingColour by remember { mutableStateOf(false) }
     var moving by remember { mutableStateOf(false) }
     var showWhere by remember { mutableStateOf(false) }
@@ -259,6 +264,16 @@ fun NoteEditor(
                     Box {
                         IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, contentDescription = "More") }
                         DropdownMenu(menu, { menu = false }) {
+                            DropdownMenuItem({ Text("Version history") }, onClick = {
+                                menu = false
+                                flush()
+                                selectedVersion = null
+                                versionText = null
+                                versions = emptyList()
+                                historyLoading = true
+                                showingHistory = true
+                                vm.noteVersions(path) { versions = it; historyLoading = false }
+                            })
                             DropdownMenuItem({ Text("Colour") }, onClick = { menu = false; choosingColour = true })
                             DropdownMenuItem({ Text("Move to folder") }, onClick = { menu = false; moving = true })
                             DropdownMenuItem(
@@ -358,6 +373,55 @@ fun NoteEditor(
         }
     }
 
+    if (showingHistory) androidx.compose.material3.AlertDialog(
+        onDismissRequest = { showingHistory = false },
+        title = { Text("Version history") },
+        text = {
+            Column(Modifier.heightIn(max = 440.dp)) {
+                if (historyLoading) Text("Loading versions…")
+                else if (versions.isEmpty()) Text("No saved versions yet")
+                Column(Modifier.heightIn(max = 160.dp).verticalScroll(rememberScrollState())) {
+                    versions.forEachIndexed { index, version ->
+                        TextButton(
+                            modifier = Modifier.semantics { contentDescription = "Saved version ${index + 1}" },
+                            onClick = {
+                                selectedVersion = version
+                                versionText = null
+                                vm.previewVersion(path, version) { if (selectedVersion == version) versionText = it }
+                            },
+                        ) {
+                            Text(java.text.DateFormat.getDateTimeInstance().format(java.util.Date(version.time)) +
+                                if (selectedVersion == version) " (selected)" else "")
+                        }
+                    }
+                }
+                if (versions.isNotEmpty()) {
+                    HorizontalDivider()
+                    if (selectedVersion == null) Text("Choose a version to preview")
+                    versionText?.let {
+                        Text(it.ifEmpty { "Empty note" }, modifier = Modifier.fillMaxWidth()
+                            .heightIn(max = 260.dp).verticalScroll(rememberScrollState())
+                            .semantics { contentDescription = "Version preview" })
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = selectedVersion != null && versionText != null, onClick = {
+                selectedVersion?.let { version ->
+                    flush()
+                    vm.restoreVersion(path, version) { restored ->
+                        saved = restored.body
+                        pinned = restored.pinned
+                        colour = restored.colour
+                        state.edit { replace(0, length, restored.body) }
+                        showingHistory = false
+                    }
+                }
+            }) { Text("Restore") }
+        },
+        dismissButton = { TextButton(onClick = { showingHistory = false }) { Text("Close") } },
+    )
     if (showWhere) androidx.compose.material3.AlertDialog(
         onDismissRequest = { showWhere = false },
         title = { Text("Where this note is") },

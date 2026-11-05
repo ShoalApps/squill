@@ -67,7 +67,9 @@ class PrivacyFlowTest {
 
     @Test fun aNoteCanMoveIntoTheVault() {
         LockedNotes(root).setUp("correct horse")
-        vault.create("", "Diary", "dear diary")
+        vault.create("", "Diary", "an earlier private entry")
+        vault.save("Diary.md", "dear diary", false, null)
+        assertTrue(vault.history.list("Diary.md").isNotEmpty())
         rule.runOnUiThread { vm.refresh() }
         rule.waitUntilExactlyOneExists(hasText("Diary"), 8000)
         rule.onNodeWithText("Diary").performClick()
@@ -79,6 +81,14 @@ class PrivacyFlowTest {
         waitFor { !File(root, "Diary.md").exists() }
         val check = LockedNotes(root); check.unlock("correct horse")
         assertEquals("dear diary", check.notes().single().body)
+        assertTrue(vault.history.list("Diary.md").isEmpty())
+        root.walkTopDown().filter { it.isFile }.forEach { file ->
+            val text = file.readBytes().toString(Charsets.ISO_8859_1)
+            assertFalse(text.contains("an earlier private entry"))
+            assertFalse(text.contains("dear diary"))
+        }
+        val index = File(context.cacheDir, "notes-index.json")
+        waitFor { !index.exists() || !index.readText().contains("dear diary") }
     }
 
     @Test fun encryptingAllNotesThenTurningItOffKeepsThemReadable() {

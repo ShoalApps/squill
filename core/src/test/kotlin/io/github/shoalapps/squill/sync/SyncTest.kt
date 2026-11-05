@@ -197,6 +197,23 @@ class SyncFlowTest {
         assertTrue(data.contentEquals(File(desk.root, "Art.ora").readBytes()))
     }
 
+    @Test fun replacementsInBothSyncDirectionsKeepLocalHistory() {
+        phone.create("", "A", "original")
+        sync()
+        phone.save("A.md", "typed on phone", false, null)
+        assertEquals(1, sync().pushed)
+        assertEquals(listOf("original"), desk.history.list("A.md").map { desk.history.read("A.md", it) })
+        desk.save("A.md", "replacement from desktop", false, null)
+        assertEquals(1, sync().pulled)
+        assertEquals("replacement from desktop", phone.read("A.md").body)
+        val recoverable = phone.history.list("A.md").map { phone.history.read("A.md", it) }
+        assertTrue("typed on phone" in recoverable)
+        assertTrue("original" in recoverable)
+        listOf(phone, desk).forEach { vault ->
+            assertEquals(setOf("A.md"), Manifest(vault).scan().keys)
+        }
+    }
+
     @Test fun deletionsGoToTheTrashOnTheOtherDevice() {
         write(phone, "A.md", "keep me safe")
         sync()

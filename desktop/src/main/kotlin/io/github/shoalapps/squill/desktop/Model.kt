@@ -11,6 +11,8 @@ import io.github.shoalapps.squill.notes.LockedNotes
 import io.github.shoalapps.squill.notes.Markdown
 import io.github.shoalapps.squill.notes.Note
 import io.github.shoalapps.squill.notes.NoteInfo
+import io.github.shoalapps.squill.notes.NoteHistory
+import io.github.shoalapps.squill.notes.NoteFile
 import io.github.shoalapps.squill.notes.PasswordKey
 import io.github.shoalapps.squill.notes.Sketch
 import io.github.shoalapps.squill.notes.SketchInfo
@@ -207,6 +209,17 @@ class Model(val root: File, private val hosting: Boolean = true, private val dev
     }
 
     fun create(folder: String, name: String, body: String = "", onDone: (Note) -> Unit = {}) = act(onDone) { vault.create(folder, name, body) }
+    fun noteVersions(path: String, onDone: (List<NoteHistory.Version>) -> Unit) = background({ result ->
+        result.onFailure { _problem.value = "Couldn't read version history" }
+        onDone(result.getOrDefault(emptyList()))
+    }) { vault.history.list(path) }
+    fun previewVersion(path: String, version: NoteHistory.Version, onDone: (String) -> Unit) =
+        background({ result ->
+            result.onSuccess(onDone).onFailure { _problem.value = "Couldn't read that version" }
+        }) { NoteFile.read(vault.history.read(path, version)).first }
+    fun restoreVersion(path: String, version: NoteHistory.Version, onDone: (Note) -> Unit) =
+        act(onDone) { vault.history.restore(path, version) }
+
     fun createFolder(parent: String, name: String) = act<Any> { vault.createFolder(parent, name) }
     fun move(path: String, folder: String, name: String, onDone: (Note) -> Unit = {}) = act(onDone) { vault.move(path, folder, name) }
     fun trash(path: String, onDone: () -> Unit = {}) = act<Unit>({ onDone() }) { vault.trash(path) }

@@ -219,9 +219,11 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Seals a note and removes the ordinary copy for good: leaving it in the trash would defeat the point. */
     fun moveToLocked(path: String, onDone: () -> Unit) = act<Unit>({ onDone() }) {
-        val note = vault.read(path)
-        locked.save(note.title, note.body)
-        vault.file(path).delete()
+        vault.moveToLocked(path, locked)
+        // An old list cache can contain the ordinary note's text too.
+        indexWrite?.cancel()
+        indexFile.delete()
+        File(indexFile.path + ".tmp").delete()
     }
 
     fun moveOutOfLocked(id: String, title: String, body: String, onDone: () -> Unit) = act<Unit>({ onDone() }) {
@@ -324,6 +326,21 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    fun noteVersions(path: String, onDone: (List<NoteHistory.Version>) -> Unit) = viewModelScope.launch(queue) {
+        val list = runCatching { synchronized(vaultLock) { vault.history.list(path) } }
+            .onFailure { _problem.value = "Couldn't read version history" }.getOrDefault(emptyList())
+        withContext(Dispatchers.Main) { onDone(list) }
+    }
+
+    fun previewVersion(path: String, version: NoteHistory.Version, onDone: (String) -> Unit) = viewModelScope.launch(queue) {
+        runCatching { synchronized(vaultLock) { NoteFile.read(vault.history.read(path, version)).first } }
+            .onSuccess { withContext(Dispatchers.Main) { onDone(it) } }
+            .onFailure { _problem.value = "Couldn't read that version" }
+    }
+
+    fun restoreVersion(path: String, version: NoteHistory.Version, onDone: (Note) -> Unit) =
+        act(onDone) { vault.history.restore(path, version) }
 
     fun refresh() = act<Unit> { }
 
