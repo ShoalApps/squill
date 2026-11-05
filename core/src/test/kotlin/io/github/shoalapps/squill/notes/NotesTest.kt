@@ -764,3 +764,57 @@ class LockedWriteTest {
     }
 }
 
+class EncryptionSafetyTest {
+    @get:Rule val dir = TemporaryFolder()
+
+    private fun backup(v: Vault) = java.io.ByteArrayOutputStream().also { v.export(it) }.toByteArray()
+
+    @Test fun aFailedConversionChangesNothing() {
+        val v = Vault(dir.newFolder("v"))
+        v.create("", "Plain", "plain words")
+        v.create("", "Stuck", "stuck words")
+        // A file sealed under some other key can't be read, so the conversion has to stop.
+        val other = PasswordKey.create(File(dir.root, "other.json"), "other password")
+        File(v.root, "Stuck.md").writeBytes(other.encode("stuck words".toByteArray()))
+        val key = PasswordKey.create(File(dir.root, "k.json"), "correct horse")
+        assertTrue(runCatching { v.convert(key) }.isFailure)
+        assertEquals(null, v.cipher)
+        assertEquals("plain words", File(v.root, "Plain.md").readText())
+        assertTrue(v.root.walkTopDown().none { it.name.endsWith(".tmp") })
+    }
+
+    @Test fun lockedNotesFromAnotherPasswordWaitForIt() {
+        val from = Vault(dir.newFolder("from"))
+        LockedNotes(from.root).also { it.setUp("old password"); it.save("Old", "from the backup", "same") }
+        val zip = backup(from)
+
+        val to = Vault(dir.newFolder("to"))
+        val here = LockedNotes(to.root).also { it.setUp("new password"); it.save("New", "already here", "same") }
+        to.importZip(zip.inputStream())
+        assertEquals(listOf("New"), here.notes().map { it.title })
+        assertEquals(1, here.restoredSets())
+
+        assertTrue(runCatching { here.mergeRestored("wrong password") }.isFailure)
+        assertEquals(1, here.restoredSets())
+        assertEquals(1, here.mergeRestored("old password"))
+        assertEquals(0, here.restoredSets())
+        assertEquals(setOf("New", "Old"), here.notes().map { it.title }.toSet())
+        assertEquals("from the backup", here.notes().first { it.title == "Old" }.body)
+        assertFalse(File(to.root, LockedNotes.INCOMING).exists())
+    }
+
+    @Test fun aBackupRestoresIntoANewVaultAndItsOwnWhole() {
+        val from = Vault(dir.newFolder("from"))
+        LockedNotes(from.root).also { it.setUp("the password"); it.save("A", "a words") }
+        val zip = backup(from)
+        val fresh = Vault(dir.newFolder("fresh"))
+        fresh.importZip(zip.inputStream())
+        assertEquals("a words", LockedNotes(fresh.root).also { it.unlock("the password") }.notes().single().body)
+        // Its own backup coming back changes nothing and asks for nothing.
+        from.importZip(zip.inputStream())
+        val again = LockedNotes(from.root).also { it.unlock("the password") }
+        assertEquals(1, again.notes().size)
+        assertEquals(0, again.restoredSets())
+    }
+}
+

@@ -130,6 +130,10 @@ fun LockedScreen(vm: NotesViewModel, moveIn: String?, onMoved: () -> Unit, onBac
     tick.let { }
     val locked = vm.locked
 
+    var restored by remember { mutableIntStateOf(0) }
+    var restoredPassword by remember { mutableStateOf("") }
+    var restoredWrong by remember { mutableStateOf(false) }
+    if (locked.isOpen) LaunchedEffect(tick) { vm.restoredLockedSets { restored = it } }
     if (locked.isOpen) {
         LaunchedEffect(moveIn) { if (moveIn != null) vm.moveToLocked(moveIn) { refresh(); onMoved() } else refresh() }
     }
@@ -169,6 +173,17 @@ fun LockedScreen(vm: NotesViewModel, moveIn: String?, onMoved: () -> Unit, onBac
                         busy = true
                         vm.unlockVault(password) { ok -> busy = false; wrong = !ok; if (ok) { password = ""; tick++ } }
                     }) { Text(if (busy) "Unlocking…" else "Unlock") }
+                }
+                restored > 0 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Locked notes from a backup", style = MaterialTheme.typography.titleMedium)
+                    Text("They were locked with a different password. Enter it to bring them in.", style = MaterialTheme.typography.bodyMedium)
+                    PasswordField(restoredPassword, "That backup's password") { restoredPassword = it; restoredWrong = false }
+                    if (restoredWrong) Text("That password isn't right", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    Button(enabled = !busy && restoredPassword.isNotEmpty(), onClick = {
+                        busy = true
+                        vm.mergeRestoredLocked(restoredPassword) { ok -> busy = false; restoredWrong = !ok; if (ok) { restoredPassword = ""; refresh(); tick++ } }
+                    }) { Text("Bring them in") }
+                    TextButton(onClick = { restored = 0 }) { Text("Not now") }
                 }
                 notes.isEmpty() -> Text("Nothing locked away yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 else -> LazyColumn(Modifier.fillMaxSize()) {

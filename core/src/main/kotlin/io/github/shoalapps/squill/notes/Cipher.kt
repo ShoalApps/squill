@@ -95,7 +95,7 @@ data class LockedNote(val id: String, val title: String, val body: String, val m
  * The locked vault, with its own password, separate from everything else. Notes here are never
  * shown in lists, search or the graph, and aren't synced. They do go into backups, still sealed.
  */
-class LockedNotes(root: File) {
+class LockedNotes(private val root: File) {
     private val dir = File(root, DIR)
     private val keyFile = File(dir, "key.json")
     private val json = Json { ignoreUnknownKeys = true }
@@ -110,6 +110,59 @@ class LockedNotes(root: File) {
     }
 
     fun unlock(password: String) { cipher = PasswordKey.unlock(keyFile, password) }
+
+    /**
+     * Files away locked notes that came from a backup. They join this vault if it's new or shares their
+     * key. Otherwise they're kept whole until their own password is given: see [mergeRestored].
+     */
+    fun finishRestore() {
+        val incoming = File(root, INCOMING)
+        if (!incoming.isDirectory) return
+        val key = File(incoming, "key.json")
+        val notes = incoming.listFiles { f -> f.name.endsWith(".enc") }.orEmpty()
+        when {
+            // Without their key these can never be read by anyone.
+            !key.isFile -> incoming.deleteRecursively()
+            !keyFile.exists() || key.readBytes().contentEquals(keyFile.readBytes()) -> {
+                dir.mkdirs()
+                notes.forEach { f -> File(dir, f.name).let { if (!it.exists()) f.copyTo(it) } }
+                if (!keyFile.exists()) key.copyTo(keyFile)
+                incoming.deleteRecursively()
+            }
+            notes.isEmpty() -> incoming.deleteRecursively()
+            else -> {
+                var n = 1
+                while (File(root, "$RESTORED$n").exists()) n++
+                if (!incoming.renameTo(File(root, "$RESTORED$n"))) throw VaultException("Couldn't keep the restored locked notes")
+            }
+        }
+    }
+
+    /** How many sets of restored locked notes are waiting for their own password. */
+    fun restoredSets(): Int = sets().size
+
+    private fun sets() = root.listFiles { f -> f.isDirectory && f.name.startsWith(RESTORED) }.orEmpty().toList()
+
+    /** Brings in every waiting set that opens with [password], under this vault's key. Returns how many notes came in. */
+    fun mergeRestored(password: String): Int {
+        key() // Nothing can come in until this vault is open.
+        val mine = dir.listFiles { f -> f.name.endsWith(".enc") }.orEmpty().map { it.name }.toSet()
+        var count = 0
+        var opened = false
+        sets().forEach { set ->
+            val theirs = runCatching { PasswordKey.unlock(File(set, "key.json"), password) }.getOrNull() ?: return@forEach
+            opened = true
+            set.listFiles { f -> f.name.endsWith(".enc") }.orEmpty().forEach { f ->
+                val note = json.decodeFromString(LockedNote.serializer(), theirs.decode(f.readBytes()).toString(Charsets.UTF_8))
+                // A note here under the same id stays, and the restored one arrives as a new note.
+                if (f.name in mine) save(note.title, note.body, modified = note.modified) else save(note.title, note.body, note.id, note.modified)
+                count++
+            }
+            set.deleteRecursively()
+        }
+        if (!opened) throw WrongPassword()
+        return count
+    }
 
     /** Forgets the key. Nothing here can be read until the password is given again. */
     fun lock() { cipher = null }
@@ -144,5 +197,7 @@ class LockedNotes(root: File) {
     companion object {
         const val DIR = ".locked"
         const val ALL_NOTES_KEY = ".squill-key.json"
+        const val INCOMING = ".locked-incoming"
+        const val RESTORED = ".locked-restored-"
     }
 }

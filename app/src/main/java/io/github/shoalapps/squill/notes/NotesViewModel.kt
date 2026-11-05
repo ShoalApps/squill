@@ -127,8 +127,15 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(queue) {
             val r = runCatching {
                 synchronized(vaultLock) {
+                    if (allNotesKey.exists()) throw VaultException("Your notes are already encrypted")
                     val key = PasswordKey.create(allNotesKey, password)
-                    vault.convert(key)
+                    try {
+                        vault.convert(key)
+                    } catch (e: Exception) {
+                        // Nothing was sealed unless the vault took the key, and then the key has to stay.
+                        if (vault.cipher == null) allNotesKey.delete() else _encrypted.value = true
+                        throw e
+                    }
                     indexFile.delete()
                     reload()
                 }
@@ -174,6 +181,16 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun lockVault() = locked.lock()
+
+    fun restoredLockedSets(onDone: (Int) -> Unit) = viewModelScope.launch(queue) {
+        val n = runCatching { locked.restoredSets() }.getOrDefault(0)
+        withContext(Dispatchers.Main) { onDone(n) }
+    }
+
+    fun mergeRestoredLocked(password: String, onDone: (Boolean) -> Unit) = viewModelScope.launch(queue) {
+        val ok = runCatching { locked.mergeRestored(password) }.isSuccess
+        withContext(Dispatchers.Main) { onDone(ok) }
+    }
 
     fun lockedNotes(onDone: (List<LockedNote>) -> Unit) = viewModelScope.launch(queue) {
         val list = runCatching { locked.notes() }.getOrDefault(emptyList())

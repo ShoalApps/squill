@@ -360,10 +360,22 @@ class Vault(val root: File) {
     /** Seals or unseals every file, one at a time, so an interruption leaves everything readable. */
     fun convert(to: NoteCipher?) {
         val files = (stats().map { at(it.path) } + (if (trash.exists()) trash.walkTopDown().filter { it.isFile && it.extension.lowercase() in KINDS }.toList() else emptyList()))
-        files.forEach { file ->
-            val plain = load(file)
-            val tmp = File(file.parentFile, ".${file.name}.tmp")
-            tmp.writeBytes(to?.encode(plain) ?: plain)
+        // Everything is written beside the originals first, so running out of space or hitting an
+        // unreadable file changes nothing at all.
+        val ready = ArrayList<Pair<File, File>>(files.size)
+        try {
+            files.forEach { file ->
+                val tmp = File(file.parentFile, ".${file.name}.converting.tmp")
+                ready += file to tmp
+                tmp.writeBytes(load(file).let { plain -> to?.encode(plain) ?: plain })
+            }
+        } catch (e: Exception) {
+            ready.forEach { it.second.delete() }
+            throw e
+        }
+        // From here on a mix of sealed and plain files can be read, as long as the key stays around.
+        if (to != null) cipher = to
+        ready.forEach { (file, tmp) ->
             if (!tmp.renameTo(file)) { file.delete(); if (!tmp.renameTo(file)) throw VaultException("Couldn't convert ${file.name}") }
         }
         cipher = to
@@ -379,6 +391,7 @@ class Vault(val root: File) {
                 zip.closeEntry()
             }
         }
+        LockedNotes(root).finishRestore()
         return count
     }
 
@@ -386,9 +399,8 @@ class Vault(val root: File) {
     fun importFile(path: String, input: InputStream): Int {
         val parts = path.replace('\\', '/').split('/').filter { it.isNotEmpty() && it != "." }
         if (parts.size == 2 && parts[0] == LockedNotes.DIR && (parts[1].endsWith(".enc") || parts[1] == "key.json") && ".." !in parts[1] && "/" !in parts[1]) {
-            // Restored only if it wouldn't overwrite a vault that's already here.
-            val target = File(root, parts.joinToString("/"))
-            if (target.exists()) return 0
+            // Held to one side until the whole backup is in, as the key can arrive after the notes.
+            val target = File(File(root, LockedNotes.INCOMING), parts[1])
             target.parentFile?.mkdirs()
             target.writeBytes(input.readBytes())
             return 0
