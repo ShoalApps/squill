@@ -109,8 +109,11 @@ object OraFile {
         return p
     }
 
-    fun thumbnail(file: java.io.File): ByteArray? = runCatching {
-        ZipInputStream(file.inputStream().buffered()).use { zip ->
+    fun thumbnail(file: java.io.File): ByteArray? = thumbnail(file.inputStream().buffered())
+    fun thumbnail(bytes: ByteArray): ByteArray? = thumbnail(ByteArrayInputStream(bytes))
+
+    private fun thumbnail(input: java.io.InputStream): ByteArray? = runCatching {
+        ZipInputStream(input).use { zip ->
             while (true) {
                 val e = zip.nextEntry ?: break
                 if (e.name == "Thumbnails/thumbnail.png") return@use zip.readBytes()

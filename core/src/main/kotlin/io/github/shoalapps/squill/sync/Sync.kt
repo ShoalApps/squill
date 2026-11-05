@@ -66,6 +66,8 @@ object SyncPlan {
     }
 }
 
+fun sha256(data: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(data).joinToString("") { "%02x".format(it) }
+
 fun sha256(file: File): String {
     val digest = MessageDigest.getInstance("SHA-256")
     file.inputStream().use { input ->
@@ -87,7 +89,7 @@ class Manifest(private val vault: Vault) {
         vault.stats().forEach { s ->
             val k = known[s.path]
             out[s.path] = if (k != null && k.modified == s.modified && k.size == s.size) k
-            else FileState(s.path, sha256(vault.file(s.path)), s.size, s.modified)
+            else FileState(s.path, if (vault.cipher != null) sha256(vault.readBytes(s.path)) else sha256(vault.file(s.path)), s.size, s.modified)
         }
         store.parentFile?.mkdirs()
         runCatching { store.writeText(json.encodeToString(serializer, out.values.toList())) }

@@ -120,6 +120,7 @@ fun NoteEditor(
     onGraph: (String) -> Unit,
     onFlushReady: ((() -> Unit)?) -> Unit,
     onOpenSketch: (String) -> Unit = {},
+    onLock: (String) -> Unit = {},
 ) {
     val info = remember(path) { library.notes.firstOrNull { it.note.path == path } }
     if (info == null) {
@@ -139,6 +140,7 @@ fun NoteEditor(
     var menu by remember { mutableStateOf(false) }
     var choosingColour by remember { mutableStateOf(false) }
     var moving by remember { mutableStateOf(false) }
+    var showWhere by remember { mutableStateOf(false) }
     val focus = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
 
@@ -281,6 +283,11 @@ fun NoteEditor(
                                 },
                                 leadingIcon = { Icon(Icons.Default.Share, null) },
                             )
+                            DropdownMenuItem(
+                                { Text("Move to locked notes") }, onClick = { menu = false; flush(); onLock(path) },
+                                leadingIcon = { Icon(painterResource(R.drawable.ic_lock), null) },
+                            )
+                            DropdownMenuItem({ Text("Where is this?") }, onClick = { menu = false; flush(); showWhere = true })
                             DropdownMenuItem({ Text("Save as Word") }, onClick = { menu = false; flush(); runCatching { exportWord.launch("${note.title}.docx") } })
                             DropdownMenuItem({ Text("Save as PDF") }, onClick = { menu = false; flush(); runCatching { exportPdf.launch("${note.title}.pdf") } })
                             DropdownMenuItem(
@@ -350,6 +357,17 @@ fun NoteEditor(
         }
     }
 
+    if (showWhere) androidx.compose.material3.AlertDialog(
+        onDismissRequest = { showWhere = false },
+        title = { Text("Where this note is") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(NotesPlace.of(vm.root, vm.privateRoot, path))
+                Text(if (vm.root == vm.privateRoot) "Only Squill can reach this. To change that, go to Settings, then Where your notes live." else "This is an ordinary file that other apps with access to your files can open.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        confirmButton = { TextButton(onClick = { showWhere = false }) { Text("OK") } },
+    )
     if (choosingColour) ColourDialog(colour, onDismiss = { choosingColour = false }) { picked ->
         colour = picked
         choosingColour = false
@@ -515,4 +533,14 @@ object NoteColours {
         val table = if (androidx.compose.foundation.isSystemInDarkTheme()) dark else light
         return key?.let { table[it] }?.let { Color(it) }
     }
+}
+
+/** A place in plain words, instead of a long path full of app internals. */
+object NotesPlace {
+    fun of(root: java.io.File, privateRoot: java.io.File, path: String = ""): String {
+        val base = if (root == privateRoot) "Squill's private storage" else tidy(root.path)
+        return if (path.isEmpty()) base else "$base / " + path.split('/').joinToString(" / ")
+    }
+
+    fun tidy(path: String) = path.removePrefix(android.os.Environment.getExternalStorageDirectory().path).trim('/').split('/').joinToString(" / ")
 }

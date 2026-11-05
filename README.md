@@ -15,6 +15,16 @@ Notes, links and reminders, as ordinary files on your phone. A Material You note
 - Opens fast however many notes you have: 10,000 notes open in under half a second once indexed, on the test device
 - Long-press the icon to jump straight to a new note, checklist, drawing or today's note
 
+## Private by choice
+
+- **Squilly's tour** shows what each part of Squill does on first run, and again from Settings.
+- **Where notes live**: private to Squill, or `Documents/Squill` as ordinary files other apps can open. Settings moves everything, and only removes the originals once it has all arrived.
+- **Encrypt all notes**: AES-256-GCM under a password that's never stored. Squill asks for it when it opens and locks after five minutes away. File names stay visible, and backups and copies synced to a computer aren't encrypted.
+- **Locked notes**: a separate encrypted vault with its own password, names included. It stays out of the list, search, graph and sync, and locks when you leave.
+- **Forgetting a password loses those notes for good.** There's no recovery.
+- **Graph linking**: drag one note onto another on the phone to link them, with Undo.
+- **Open with Squill**: pictures open as paintings, and `.md`, `.docx`, `.pptx`, `.ora` and `.kra` files come in too. Formats Android can't decode, such as SVG and most TIFF, are refused with a message.
+
 ## Drawing
 
 - Low-latency ink with pen, marker and highlighter, with pressure where the pen has it

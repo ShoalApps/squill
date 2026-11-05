@@ -79,6 +79,21 @@ object Links {
         }
     }
 
+    /** The text with a link to [target] added at the end, unless it already links there. */
+    fun addLink(text: String, target: String, resolver: Resolver? = null): String {
+        val wanted = resolver?.resolve(target)
+        if (scan(text).first.any { it.equals(target, ignoreCase = true) || (wanted != null && resolver.resolve(it) == wanted) }) return text
+        val body = text.trimEnd()
+        return (if (body.isEmpty()) "" else "$body\n\n") + "[[$target]]\n"
+    }
+
+    /** Takes back a link [addLink] just added. */
+    fun removeLink(text: String, target: String): String {
+        val link = "[[$target]]\n"
+        if (!text.endsWith(link)) return text
+        return text.removeSuffix(link).trimEnd().let { if (it.isEmpty()) "" else "$it\n" }
+    }
+
     /** Points ![[embeds]] of a drawing at its new name. */
     fun retargetEmbed(text: String, oldName: String, newName: String): String =
         Regex("!\\[\\[" + Regex.escape(oldName) + "((?:\\|[^\\]]*)?)]]", RegexOption.IGNORE_CASE).replace(text) { "![[" + newName + it.groupValues[1] + "]]" }
@@ -170,13 +185,13 @@ data class Graph(val nodes: List<GraphNode>, val edges: List<Pair<Int, Int>>) {
 }
 
 /** A simple force-directed layout: nodes push apart, links pull together, and the middle draws everything in. */
-class GraphLayout(private val graph: Graph, seed: Int = 7) {
+class GraphLayout(private val graph: Graph, seed: Int = 7, from: GraphLayout? = null) {
+    /** Cools with every step, so the layout always comes to rest. */
+    private var heat = 1f
     val x = FloatArray(graph.nodes.size)
     val y = FloatArray(graph.nodes.size)
     private val vx = FloatArray(graph.nodes.size)
     private val vy = FloatArray(graph.nodes.size)
-    /** Cools with every step, so the layout always comes to rest. */
-    private var heat = 1f
 
     init {
         // A spiral start spreads nodes evenly and comes out the same every time.
@@ -186,7 +201,23 @@ class GraphLayout(private val graph: Graph, seed: Int = 7) {
             x[i] = r * kotlin.math.cos(golden * i)
             y[i] = r * kotlin.math.sin(golden * i)
         }
+        // Keeps a note where it was when the graph changes, instead of the whole thing jumping.
+        if (from != null) {
+            val old = from.graph.nodes.withIndex().associate { (i, n) -> n.id to i }
+            graph.nodes.forEachIndexed { i, n -> old[n.id]?.let { j -> x[i] = from.x[j]; y[i] = from.y[j] } }
+            heat = .4f
+        }
     }
+
+    /** A node being dragged: it stays under the finger while the rest carry on around it. */
+    var held: Int = -1
+
+    fun place(i: Int, px: Float, py: Float) {
+        x[i] = px; y[i] = py; vx[i] = 0f; vy[i] = 0f
+    }
+
+    /** Gets things moving again after a drag. */
+    fun reheat() { heat = maxOf(heat, .35f) }
 
     /** One step. Returns how much is still moving, so the caller knows when to stop. */
     fun step(): Float {
@@ -230,6 +261,7 @@ class GraphLayout(private val graph: Graph, seed: Int = 7) {
             fy[i] -= y[i] * .012f
             vx[i] = (vx[i] + fx[i] * .35f) * .72f
             vy[i] = (vy[i] + fy[i] * .35f) * .72f
+            if (i == held) { vx[i] = 0f; vy[i] = 0f; continue }
             x[i] += vx[i] * heat
             y[i] += vy[i] * heat
             moving += (kotlin.math.abs(vx[i]) + kotlin.math.abs(vy[i])) * heat

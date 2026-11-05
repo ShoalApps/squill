@@ -57,6 +57,12 @@ fun SquillHome(reminders: RemindersViewModel, notes: NotesViewModel) {
     var openPath by rememberSaveable { mutableStateOf<String?>(null) }
     var graphFocus by rememberSaveable { mutableStateOf<String?>(null) }
     var flushEditor by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val testing = remember { runCatching { Class.forName("org.junit.runner.RunWith") }.isSuccess }
+    val startContext = LocalContext.current
+    var touring by rememberSaveable { mutableStateOf(!testing && !Prefs.tourSeen(startContext)) }
+    var askFolder by rememberSaveable { mutableStateOf(false) }
+    var lockedOpen by rememberSaveable { mutableStateOf(false) }
+    var lockingPath by rememberSaveable { mutableStateOf<String?>(null) }
     val library by notes.library.collectAsState()
     val jot by reminders.jot.collectAsState()
     val shared by notes.shared.collectAsState()
@@ -68,6 +74,17 @@ fun SquillHome(reminders: RemindersViewModel, notes: NotesViewModel) {
             val title = text.trim().lineSequence().first().take(60).ifBlank { "Shared note" }
             notes.create(folder, title, text.trim()) { openPath = it.path }
             notes.clearShared()
+        }
+    }
+    val incoming by notes.incoming.collectAsState()
+    LaunchedEffect(incoming) {
+        incoming?.let { uri ->
+            settings = false; trash = false; lockedOpen = false; tab = Tab.NOTES
+            notes.importOffice(context, uri, "") { result ->
+                result.onSuccess { openPath = it }
+                result.onFailure { android.widget.Toast.makeText(context, it.message ?: "That file couldn't be opened", android.widget.Toast.LENGTH_LONG).show() }
+            }
+            notes.clearIncoming()
         }
     }
     val quick by notes.quick.collectAsState()
@@ -87,10 +104,34 @@ fun SquillHome(reminders: RemindersViewModel, notes: NotesViewModel) {
     LaunchedEffect(openPath) { notes.openFile = openPath?.takeUnless { it.endsWith(".md") } }
     val owner = androidx.compose.ui.platform.LocalLifecycleOwner.current
     LaunchedEffect(owner) {
+        // Encrypted notes lock themselves after five minutes away.
+        var leftAt = 0L
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, e ->
+            if (e == androidx.lifecycle.Lifecycle.Event.ON_STOP) leftAt = System.currentTimeMillis()
+            if (e == androidx.lifecycle.Lifecycle.Event.ON_START && leftAt > 0 && System.currentTimeMillis() - leftAt > 5 * 60_000) notes.lockAll()
+        }
+        owner.lifecycle.addObserver(observer)
         owner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) { notes.sync(manual = false) }
     }
+    val needsUnlock by notes.needsUnlock.collectAsState()
+    if (needsUnlock) {
+        io.github.shoalapps.squill.notes.UnlockScreen(notes)
+        return
+    }
+    if (touring) {
+        TourScreen { chooseFolder ->
+            Prefs.setTourSeen(context)
+            touring = false
+            if (chooseFolder) { settings = true; askFolder = true }
+        }
+        return
+    }
     if (settings) {
-        SettingsScreen(notes, onBack = { settings = false })
+        SettingsScreen(notes, onBack = { settings = false }, onTour = { settings = false; touring = true }, askFolder = askFolder, onAsked = { askFolder = false })
+        return
+    }
+    if (lockedOpen) {
+        io.github.shoalapps.squill.notes.LockedScreen(notes, moveIn = lockingPath, onMoved = { lockingPath = null; openPath = null }, onBack = { lockedOpen = false; lockingPath = null })
         return
     }
     if (trash) {
@@ -113,6 +154,8 @@ fun SquillHome(reminders: RemindersViewModel, notes: NotesViewModel) {
                     Tab.REMINDERS -> SquillScreen(reminders, onSettings = { settings = true })
                     Tab.GRAPH -> GraphScreen(
                         library, graphFocus, onClearFocus = { graphFocus = null },
+                        onLink = { from, target, done -> notes.linkNotes(from, target, done) },
+                        onUnlink = { from, target -> notes.unlink(from, target) },
                         onOpen = { node ->
                             val path = node.path
                             if (path != null) { openPath = path; tab = Tab.NOTES }
@@ -135,6 +178,7 @@ fun SquillHome(reminders: RemindersViewModel, notes: NotesViewModel) {
                                     },
                                     onTrash = { trash = true },
                                     onSettings = { settings = true },
+                                    onLocked = { lockedOpen = true },
                                 )
                             }
                         }
@@ -164,6 +208,7 @@ fun SquillHome(reminders: RemindersViewModel, notes: NotesViewModel) {
                                         onGraph = { graphFocus = it; tab = Tab.GRAPH },
                                         onFlushReady = { flushEditor = it },
                                         onOpenSketch = { openPath = it },
+                                        onLock = { lockingPath = it; lockedOpen = true },
                                     )
                                 }
                             }

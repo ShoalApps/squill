@@ -43,6 +43,11 @@ class MainActivity : ComponentActivity() {
 
     /** Shared text and the widget's + button start a note or a reminder. */
     fun handle(intent: Intent) {
+        // Pictures and documents opened from another app.
+        val isAlias = intent.component?.className?.endsWith(".ShareAsNote") == true
+        val stream = @Suppress("DEPRECATION") intent.getParcelableExtra<android.net.Uri>(Intent.EXTRA_STREAM)
+        if (intent.action == Intent.ACTION_VIEW && intent.data != null) { notes.open(intent.data!!); return }
+        if (intent.action == Intent.ACTION_SEND && stream != null && !isAlias) { notes.open(stream); return }
         when (intent.action) {
             ACTION_JOT -> vm.jot("")
             ACTION_NEW_NOTE, ACTION_NEW_LIST, ACTION_NEW_DRAWING, ACTION_TODAY -> notes.quick(intent.action!!)

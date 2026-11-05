@@ -88,6 +88,7 @@ fun NotesScreen(
     onBeforeChange: (String) -> Unit,
     onTrash: () -> Unit,
     onSettings: () -> Unit,
+    onLocked: () -> Unit = {},
 ) {
     val library by vm.library.collectAsState()
     val problem by vm.problem.collectAsState()
@@ -175,6 +176,7 @@ fun NotesScreen(
                             DropdownMenu(menu, { menu = false }) {
                                 DropdownMenuItem({ Text("Open a file") }, onClick = { menu = false; runCatching { importOffice.launch(arrayOf("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "image/*", "application/zip", "application/octet-stream")) } })
                                 DropdownMenuItem({ Text("New folder") }, onClick = { menu = false; ask = Ask.NewFolder }, leadingIcon = { Icon(painterResource(R.drawable.ic_folder), null) })
+                                DropdownMenuItem({ Text("Locked notes") }, onClick = { menu = false; onLocked() }, leadingIcon = { Icon(painterResource(R.drawable.ic_lock), null) })
                                 val trashed = library.trash.size
                                 DropdownMenuItem({ Text(if (trashed == 0) "Trash" else "Trash ($trashed)") }, onClick = { menu = false; onTrash() })
                                 DropdownMenuItem({ Text("Settings") }, onClick = { menu = false; onSettings() }, leadingIcon = { Icon(Icons.Default.Settings, null) })

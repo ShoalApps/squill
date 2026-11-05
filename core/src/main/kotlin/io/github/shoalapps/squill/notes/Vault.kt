@@ -57,6 +57,23 @@ data class FileStat(val path: String, val modified: Long, val size: Long)
 class Vault(val root: File) {
     private val trash = File(root, TRASH)
 
+    /** When set, everything written is sealed, and sealed files read back as they were. */
+    @Volatile var cipher: NoteCipher? = null
+
+    private fun load(file: File): ByteArray {
+        val data = file.readBytes()
+        if (!NoteCipher.isSealed(data)) return data
+        return (cipher ?: throw VaultException("Your notes are locked")).decode(data)
+    }
+
+    private fun loadText(file: File) = load(file).toString(Charsets.UTF_8)
+    private fun seal(data: ByteArray): ByteArray {
+        // Never let a locked vault gain a note in plain text.
+        val c = cipher
+        if (c == null && File(root, LockedNotes.ALL_NOTES_KEY).exists()) throw VaultException("Your notes are locked")
+        return c?.encode(data) ?: data
+    }
+
     init { root.mkdirs() }
 
     /** Refuses any path that would escape the vault, however it's spelt. */
@@ -82,7 +99,7 @@ class Vault(val root: File) {
 
     fun exists(path: String) = at(path).exists()
 
-    fun readText(path: String) = at(path).readText()
+    fun readText(path: String) = loadText(at(path))
 
     fun createSketch(folder: String, name: String, sketch: Sketch = Sketch()): String {
         at(folder).mkdirs()
@@ -93,13 +110,15 @@ class Vault(val root: File) {
 
     fun saveSketch(path: String, sketch: Sketch) = writeAtomically(at(path), sketch.toSvg())
 
-    fun readBytes(path: String) = at(path).readBytes()
+    fun readBytes(path: String) = load(at(path))
 
     /** Writes through [write] to a temporary file first, so a failed save can't damage what's there. */
     fun writeFile(path: String, write: (java.io.OutputStream) -> Unit) {
         val file = at(path)
         val tmp = File(file.parentFile, ".${file.name}.tmp")
-        tmp.outputStream().buffered().use(write)
+        if (cipher == null && File(root, LockedNotes.ALL_NOTES_KEY).exists()) throw VaultException("Your notes are locked")
+        if (cipher == null) tmp.outputStream().buffered().use(write)
+        else tmp.writeBytes(seal(java.io.ByteArrayOutputStream().also(write).toByteArray()))
         if (!tmp.renameTo(file)) {
             file.delete()
             if (!tmp.renameTo(file)) { tmp.delete(); throw VaultException("Couldn't save that file") }
@@ -167,7 +186,7 @@ class Vault(val root: File) {
     }
 
     private fun read(file: File): Note {
-        val (body, pinned, colour) = NoteFile.read(file.readText())
+        val (body, pinned, colour) = NoteFile.read(loadText(file))
         return Note(relative(file), body, file.lastModified(), pinned, colour)
     }
 
@@ -199,7 +218,7 @@ class Vault(val root: File) {
     /** Saves a note's text and properties. If the file has gone, it's written afresh rather than lost. */
     fun save(path: String, body: String, pinned: Boolean, colour: String?): Note {
         val file = at(path)
-        val original = if (file.exists()) file.readText() else null
+        val original = if (file.exists()) loadText(file) else null
         file.parentFile?.mkdirs()
         writeAtomically(file, NoteFile.write(original, body, pinned, colour))
         return read(file)
@@ -207,7 +226,7 @@ class Vault(val root: File) {
 
     private fun writeAtomically(file: File, text: String) {
         val tmp = File(file.parentFile, ".${file.name}.tmp")
-        tmp.writeText(text)
+        tmp.writeBytes(seal(text.toByteArray()))
         if (!tmp.renameTo(file)) {
             file.delete()
             if (!tmp.renameTo(file)) { tmp.delete(); throw VaultException("Couldn't save that note") }
@@ -295,7 +314,7 @@ class Vault(val root: File) {
     fun trashed(): List<Note> = if (!trash.exists()) emptyList() else trash.walkTopDown()
         .filter { it.isFile && it.extension.lowercase() in KINDS && !it.name.startsWith(".") }
         .map { file ->
-            val (body, pinned, colour) = if (!file.extension.equals("md", ignoreCase = true)) Triple("", false, null) else NoteFile.read(file.readText())
+            val (body, pinned, colour) = if (!file.extension.equals("md", ignoreCase = true)) Triple("", false, null) else NoteFile.read(loadText(file))
             Note(file.relativeTo(trash).invariantSeparatorsPath, body, file.lastModified(), pinned, colour)
         }.sortedByDescending { it.modified }.toList()
 
@@ -324,12 +343,30 @@ class Vault(val root: File) {
             root.walkTopDown().onEnter { !it.name.startsWith(".") || it == root }
                 .filter { it.isFile && !it.name.startsWith(".") }.forEach { file ->
                     zip.putNextEntry(ZipEntry(relative(file)))
-                    file.inputStream().use { it.copyTo(zip) }
+                    zip.write(if (file.extension.lowercase() in KINDS) load(file) else file.readBytes())
                     zip.closeEntry()
                     count++
                 }
+            // The locked vault goes in as it is: still sealed, and only its own password opens it.
+            File(root, LockedNotes.DIR).listFiles().orEmpty().filter { it.isFile && (it.extension == "enc" || it.name == "key.json") }.forEach { file ->
+                zip.putNextEntry(ZipEntry(LockedNotes.DIR + "/" + file.name))
+                file.inputStream().use { it.copyTo(zip) }
+                zip.closeEntry()
+            }
         }
         return count
+    }
+
+    /** Seals or unseals every file, one at a time, so an interruption leaves everything readable. */
+    fun convert(to: NoteCipher?) {
+        val files = (stats().map { at(it.path) } + (if (trash.exists()) trash.walkTopDown().filter { it.isFile && it.extension.lowercase() in KINDS }.toList() else emptyList()))
+        files.forEach { file ->
+            val plain = load(file)
+            val tmp = File(file.parentFile, ".${file.name}.tmp")
+            tmp.writeBytes(to?.encode(plain) ?: plain)
+            if (!tmp.renameTo(file)) { file.delete(); if (!tmp.renameTo(file)) throw VaultException("Couldn't convert ${file.name}") }
+        }
+        cipher = to
     }
 
     /** Adds the notes in a zip. Never overwrites: a name that's taken gets a number. Returns how many came in. */
@@ -348,6 +385,14 @@ class Vault(val root: File) {
     /** Adds one Markdown file at [path]. Other files, and anything hidden such as .obsidian, are skipped. */
     fun importFile(path: String, input: InputStream): Int {
         val parts = path.replace('\\', '/').split('/').filter { it.isNotEmpty() && it != "." }
+        if (parts.size == 2 && parts[0] == LockedNotes.DIR && (parts[1].endsWith(".enc") || parts[1] == "key.json") && ".." !in parts[1] && "/" !in parts[1]) {
+            // Restored only if it wouldn't overwrite a vault that's already here.
+            val target = File(root, parts.joinToString("/"))
+            if (target.exists()) return 0
+            target.parentFile?.mkdirs()
+            target.writeBytes(input.readBytes())
+            return 0
+        }
         if (parts.isEmpty() || parts.any { it == ".." || it.startsWith(".") }) return 0
         val file = parts.last()
         val extension = file.substringAfterLast('.', "").lowercase()

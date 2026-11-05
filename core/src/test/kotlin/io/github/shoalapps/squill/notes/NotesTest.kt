@@ -577,3 +577,190 @@ Ending paragraph.
         assertNull(Deck.parse("""{"slides":[]}"""))
     }
 }
+
+class CipherTest {
+    @get:Rule val dir = TemporaryFolder()
+
+    @Test fun passwordsOpenTheirKeyAndNothingElse() {
+        val f = File(dir.root, "k.json")
+        val c = PasswordKey.create(f, "hunter22")
+        val sealed = c.encode("secret".toByteArray())
+        assertFalse(String(sealed, Charsets.ISO_8859_1).contains("secret"))
+        assertFalse(f.readText().contains("hunter22"))
+        assertEquals("secret", PasswordKey.unlock(f, "hunter22").decode(sealed).toString(Charsets.UTF_8))
+        assertTrue(runCatching { PasswordKey.unlock(f, "wrong") }.exceptionOrNull() is WrongPassword)
+        PasswordKey.changePassword(f, "hunter22", "new one")
+        assertEquals("secret", PasswordKey.unlock(f, "new one").decode(sealed).toString(Charsets.UTF_8))
+        assertTrue(runCatching { PasswordKey.unlock(f, "hunter22") }.isFailure)
+    }
+
+    @Test fun tamperingIsCaught() {
+        val c = PasswordKey.create(File(dir.root, "k.json"), "p")
+        val sealed = c.encode("secret".toByteArray())
+        sealed[sealed.size - 1] = (sealed[sealed.size - 1] + 1).toByte()
+        assertTrue(runCatching { c.decode(sealed) }.isFailure)
+    }
+
+    @Test fun aWholeVaultCanBeSealedAndOpened() {
+        val v = Vault(dir.newFolder("v"))
+        v.create("Sub", "Plain", "#tag private words")
+        v.createSketch("", "Art", Sketch(texts = listOf(SketchText(1f, 1f, "drawn", 0))))
+        v.create("", "Gone", "trashed words"); v.trash("Gone.md")
+        val key = PasswordKey.create(File(v.root, LockedNotes.ALL_NOTES_KEY), "pw")
+        v.convert(key)
+        v.root.walkTopDown().filter { it.isFile && it.extension in setOf("md", "svg") }.forEach { f ->
+            assertTrue(f.name, NoteCipher.isSealed(f.readBytes()))
+            assertFalse(f.name, f.readBytes().toString(Charsets.ISO_8859_1).contains("private"))
+        }
+        assertEquals("#tag private words", v.read("Sub/Plain.md").body)
+        assertEquals("drawn", Sketch.parse(v.readText("Art.svg"))!!.texts.single().text)
+        assertEquals("trashed words", v.trashed().single().body)
+        // New and changed notes are sealed too, and renames keep working.
+        v.create("", "New", "[[Sub/Plain]]")
+        assertTrue(NoteCipher.isSealed(File(v.root, "New.md").readBytes()))
+        v.move("Sub/Plain.md", "", "Moved")
+        assertEquals("[[Moved]]", v.read("New.md").body)
+        // A backup is readable anywhere, so saying what you're doing matters.
+        val zip = ByteArrayOutputStream().also { v.export(it) }.toByteArray()
+        val other = Vault(dir.newFolder("other"))
+        other.importZip(ByteArrayInputStream(zip))
+        assertEquals("[[Moved]]", other.read("New.md").body)
+        // A locked vault with no key refuses rather than showing rubbish.
+        val cold = Vault(v.root)
+        assertTrue(runCatching { cold.read("New.md") }.exceptionOrNull() is VaultException)
+        v.convert(null)
+        assertFalse(NoteCipher.isSealed(File(v.root, "New.md").readBytes()))
+        assertEquals("[[Moved]]", Vault(v.root).read("New.md").body)
+    }
+
+    @Test fun aHalfFinishedConversionStillReads() {
+        val v = Vault(dir.newFolder("v"))
+        v.create("", "A", "one"); v.create("", "B", "two")
+        val key = PasswordKey.create(File(dir.root, "k.json"), "pw")
+        File(v.root, "A.md").writeBytes(key.encode(File(v.root, "A.md").readBytes()))
+        v.cipher = key
+        assertEquals("one", v.read("A.md").body)
+        assertEquals("two", v.read("B.md").body)
+    }
+
+    @Test fun theLockedVaultKeepsNamesAndWordsSealed() {
+        val root = dir.newFolder("r")
+        val locked = LockedNotes(root)
+        assertFalse(locked.isSetUp)
+        assertTrue(runCatching { locked.notes() }.isFailure)
+        locked.setUp("pw")
+        val n = locked.save("Secret name", "Secret words")
+        val files = File(root, LockedNotes.DIR).listFiles()!!.filter { it.name.endsWith(".enc") }
+        assertEquals(1, files.size)
+        assertFalse(files[0].readBytes().toString(Charsets.ISO_8859_1).contains("Secret"))
+        assertFalse(files[0].name.contains("Secret"))
+        locked.lock()
+        assertTrue(runCatching { locked.notes() }.isFailure)
+        val again = LockedNotes(root)
+        assertTrue(runCatching { again.unlock("nope") }.isFailure)
+        assertFalse(again.isOpen)
+        again.unlock("pw")
+        assertEquals(listOf("Secret name"), again.notes().map { it.title })
+        again.save("Renamed", "x", id = n.id)
+        assertEquals(1, again.notes().size)
+        again.delete(n.id)
+        assertTrue(again.notes().isEmpty())
+    }
+
+    @Test fun theLockedVaultStaysOutOfListsAndTravelsSealedInBackups() {
+        val v = Vault(dir.newFolder("v"))
+        val locked = LockedNotes(v.root)
+        locked.setUp("pw")
+        locked.save("Hidden", "words")
+        assertTrue(v.notes().isEmpty()); assertTrue(v.stats().isEmpty()); assertTrue(v.folders().isEmpty())
+        val zip = ByteArrayOutputStream().also { v.export(it) }.toByteArray()
+        assertFalse(zip.toString(Charsets.ISO_8859_1).contains("words"))
+        val restored = Vault(dir.newFolder("back"))
+        restored.importZip(ByteArrayInputStream(zip))
+        val back = LockedNotes(restored.root)
+        assertTrue(back.isSetUp)
+        back.unlock("pw")
+        assertEquals("words", back.notes().single().body)
+    }
+}
+
+class GraphLinkTest {
+    @Test fun addingALinkIsPoliteAndUndoable() {
+        assertEquals("Words\n\n[[Boats]]\n", Links.addLink("Words\n", "Boats"))
+        assertEquals("[[Boats]]\n", Links.addLink("", "Boats"))
+        assertEquals("See [[Boats]]", Links.addLink("See [[Boats]]", "boats"))
+        assertEquals("Words\n", Links.removeLink(Links.addLink("Words\n", "Boats"), "Boats"))
+        assertEquals("", Links.removeLink(Links.addLink("", "Boats"), "Boats"))
+        val r = Links.Resolver(listOf("Ideas/Boats.md"))
+        assertEquals("[[Ideas/Boats]]", Links.addLink("[[Ideas/Boats]]", "Boats", r))
+    }
+
+    @Test fun nodesStayPutAcrossChangesAndWhileHeld() {
+        val a = Graph.of(mapOf("A.md" to emptyList(), "B.md" to emptyList()))
+        val first = GraphLayout(a)
+        first.place(0, 500f, 500f)
+        val b = Graph.of(mapOf("A.md" to listOf("B"), "B.md" to emptyList(), "C.md" to emptyList()))
+        val second = GraphLayout(b, from = first)
+        assertEquals(500f, second.x[b.nodes.indexOfFirst { it.title == "A" }])
+        second.held = 0
+        second.place(0, 100f, 100f)
+        repeat(20) { second.step() }
+        assertEquals(100f, second.x[0])
+    }
+}
+
+class VaultMoverTest {
+    @get:Rule val dir = TemporaryFolder()
+
+    @Test fun everythingArrivesAndHiddenPartsToo() {
+        val a = Vault(dir.newFolder("a"))
+        a.create("Sub", "Note", "words")
+        a.create("", "Gone", "x"); a.trash("Gone.md")
+        File(a.root, ".sync").mkdirs(); File(a.root, ".sync/id").writeText("me")
+        LockedNotes(a.root).also { it.setUp("pw"); it.save("L", "locked") }
+        val to = File(dir.root, "b/deep")
+        assertEquals(5, VaultMover.move(a.root, to))
+        assertEquals("words", Vault(to).read("Sub/Note.md").body)
+        assertEquals("x", Vault(to).trashed().single().body)
+        assertEquals("me", File(to, ".sync/id").readText())
+        assertEquals(1, LockedNotes(to).also { it.unlock("pw") }.notes().size)
+        assertTrue(a.root.walkTopDown().none { it.isFile })
+    }
+
+    @Test fun nothingIsOverwritten() {
+        val a = Vault(dir.newFolder("a")); val b = Vault(dir.newFolder("b"))
+        a.create("", "Same", "same"); b.create("", "Same", "same")
+        a.create("", "Clash", "from a"); b.create("", "Clash", "from b")
+        VaultMover.move(a.root, b.root)
+        assertEquals("from b", b.read("Clash.md").body)
+        assertEquals("from a", b.read("Clash (moved 2).md").body)
+        assertEquals(3, b.notes().size)
+    }
+
+    @Test fun aFolderInsideItselfIsRefused() {
+        val a = Vault(dir.newFolder("a"))
+        assertTrue(runCatching { VaultMover.move(a.root, File(a.root, "inner")) }.isFailure)
+        assertEquals(0, VaultMover.move(a.root, a.root))
+    }
+}
+
+class LockedWriteTest {
+    @get:Rule val dir = TemporaryFolder()
+
+    @Test fun aLockedVaultRefusesPlainWrites() {
+        val v = Vault(dir.newFolder("v"))
+        v.create("", "A", "words")
+        val key = PasswordKey.create(File(v.root, LockedNotes.ALL_NOTES_KEY), "correct horse")
+        v.convert(key)
+        v.cipher = null
+        assertTrue(runCatching { v.create("", "B", "plain words") }.isFailure)
+        assertFalse(File(v.root, "B.md").exists())
+        v.cipher = key
+        v.create("", "B", "sealed words")
+        assertTrue(NoteCipher.isSealed(File(v.root, "B.md").readBytes()))
+        v.convert(null)
+        File(v.root, LockedNotes.ALL_NOTES_KEY).delete()
+        assertEquals("sealed words", v.read("B.md").body)
+    }
+}
+

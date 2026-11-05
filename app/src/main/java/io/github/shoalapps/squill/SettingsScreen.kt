@@ -58,13 +58,14 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
+import androidx.lifecycle.repeatOnLifecycle
 
 private fun open(context: Context, url: String) {
     runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri())) }
 }
 
 @Composable
-fun SettingsScreen(notes: io.github.shoalapps.squill.notes.NotesViewModel, onBack: () -> Unit) {
+fun SettingsScreen(notes: io.github.shoalapps.squill.notes.NotesViewModel, onBack: () -> Unit, onTour: () -> Unit = {}, askFolder: Boolean = false, onAsked: () -> Unit = {}) {
     val context = LocalContext.current
     BackHandler(onBack = onBack)
     var snooze by remember { mutableIntStateOf(Prefs.snoozeMinutes(context)) }
@@ -155,6 +156,13 @@ fun SettingsScreen(notes: io.github.shoalapps.squill.notes.NotesViewModel, onBac
                     else toast("Add it from your home screen's widget list")
                 },
             )
+            ListItem(
+                headlineContent = { Text("Take the tour") },
+                supportingContent = { Text("What each part of Squill does") },
+                modifier = Modifier.clickable(onClick = onTour),
+            )
+            PlaceRow(notes, askFolder, onAsked)
+            EncryptRow(notes)
             SyncRow(notes)
             ListItem(
                 headlineContent = { Text("Back up notes") },
@@ -198,6 +206,116 @@ fun SettingsScreen(notes: io.github.shoalapps.squill.notes.NotesViewModel, onBac
             )
         }
     }
+}
+
+/** Restarts Squill so that it opens from the new place, with nothing left over from the old one. */
+private fun restart(context: Context) {
+    val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)!!.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+    context.startActivity(intent)
+    Runtime.getRuntime().exit(0)
+}
+
+private fun canUseSharedFolder(context: Context) = if (android.os.Build.VERSION.SDK_INT >= 30) android.os.Environment.isExternalStorageManager()
+    else androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.WRITE_EXTERNAL_STORAGE) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+/** Private to Squill, or an ordinary folder other apps can open. */
+@Composable
+private fun PlaceRow(notes: io.github.shoalapps.squill.notes.NotesViewModel, askFolder: Boolean, onAsked: () -> Unit) {
+    val context = LocalContext.current
+    val isPrivate = notes.root == notes.privateRoot
+    val shared = remember { java.io.File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS), "Squill") }
+    var choosing by remember { mutableStateOf(askFolder) }
+    var moving by remember { mutableStateOf(false) }
+    var failure by remember { mutableStateOf<String?>(null) }
+    var waitingForAccess by remember { mutableStateOf(false) }
+    fun moveTo(target: java.io.File, savedPath: String?) {
+        moving = true
+        notes.moveVault(target) { result ->
+            result.onSuccess { Prefs.setNotesFolder(context, savedPath); restart(context) }
+                .onFailure { moving = false; failure = it.message ?: "Couldn't move your notes. They're still where they were." }
+        }
+    }
+    fun goShared() {
+        if (canUseSharedFolder(context)) moveTo(shared, shared.path)
+        else if (android.os.Build.VERSION.SDK_INT >= 30) {
+            waitingForAccess = true
+            runCatching { context.startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, "package:${context.packageName}".toUri())) }
+                .onFailure { context.startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) }
+        } else failure = "Allow Squill to use your files in your phone's app settings, then try again."
+    }
+    // Coming back from the system's permission screen.
+    val owner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    androidx.compose.runtime.LaunchedEffect(owner, waitingForAccess) {
+        if (waitingForAccess) owner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            if (canUseSharedFolder(context)) { waitingForAccess = false; moveTo(shared, shared.path) }
+        }
+    }
+    ListItem(
+        headlineContent = { Text("Where your notes live") },
+        supportingContent = { Text(if (isPrivate) "Private: only Squill can reach them" else io.github.shoalapps.squill.notes.NotesPlace.of(notes.root, notes.privateRoot) + ". Other apps can see them") },
+        modifier = Modifier.clickable { choosing = true },
+    )
+    if (choosing) androidx.compose.material3.AlertDialog(
+        onDismissRequest = { choosing = false; onAsked() },
+        title = { Text("Where your notes live") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Private keeps them where no other app can reach them. They're removed if you uninstall Squill.")
+                Text("Documents / Squill keeps them as ordinary files that file managers, Obsidian and backup apps can open, and they stay if you uninstall. Android will ask you to allow Squill access to your files.")
+                if (moving) Text("Moving your notes…", fontWeight = FontWeight.Bold)
+                failure?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = {
+            if (isPrivate) TextButton(enabled = !moving, onClick = { failure = null; goShared() }) { Text("Use Documents / Squill") }
+            else TextButton(enabled = !moving, onClick = { failure = null; moveTo(notes.privateRoot, null) }) { Text("Make private") }
+        },
+        dismissButton = { TextButton(onClick = { choosing = false; onAsked() }) { Text("Cancel") } },
+    )
+}
+
+/** Encrypting every note under a password, or taking that off again. */
+@Composable
+private fun EncryptRow(notes: io.github.shoalapps.squill.notes.NotesViewModel) {
+    val encrypted by notes.encrypted.collectAsState()
+    var asking by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var failure by remember { mutableStateOf<String?>(null) }
+    ListItem(
+        headlineContent = { Text("Encrypt all notes") },
+        supportingContent = { Text(if (encrypted) "On. Squill asks for your password when it opens, and locks after five minutes away" else "Off. Ask for a password to open your notes, drawings and everything else") },
+        trailingContent = { androidx.compose.material3.Switch(encrypted, { failure = null; asking = true }) },
+    )
+    if (encrypted) ListItem(
+        headlineContent = { Text("Lock now") },
+        modifier = Modifier.clickable { notes.lockAll() },
+    )
+    if (asking) androidx.compose.material3.AlertDialog(
+        onDismissRequest = { if (!busy) asking = false },
+        title = { Text(if (encrypted) "Stop encrypting?" else "Encrypt all notes") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (encrypted) {
+                    var password by remember { mutableStateOf("") }
+                    Text("Your notes will be stored unencrypted again.")
+                    io.github.shoalapps.squill.notes.PasswordField(password, "Password") { password = it; failure = null }
+                    failure?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    Button(enabled = !busy && password.isNotEmpty(), onClick = {
+                        busy = true
+                        notes.decryptAll(password) { r -> busy = false; r.onSuccess { asking = false }.onFailure { failure = "That password isn't right" } }
+                    }) { Text(if (busy) "Working…" else "Stop encrypting") }
+                } else {
+                    io.github.shoalapps.squill.notes.NewPassword(
+                        "Everything's sealed on this device, though file names stay visible. Backups you make and copies synced to your computer aren't encrypted. For a note's name to be hidden too, use Locked notes.",
+                        if (busy) "Working…" else "Encrypt", busy = busy,
+                        onDone = { p -> busy = true; notes.encryptAll(p) { r -> busy = false; r.onSuccess { asking = false }.onFailure { failure = it.message } } },
+                    )
+                    failure?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
+            }
+        },
+        confirmButton = { TextButton(enabled = !busy, onClick = { asking = false }) { Text("Cancel") } },
+    )
 }
 
 /** Pairing with a computer, and how that's going. */

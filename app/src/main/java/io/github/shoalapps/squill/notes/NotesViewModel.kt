@@ -20,8 +20,17 @@ import java.time.LocalDate
 /** One note at a time goes through a single-file queue, so a save can't overtake a rename. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class NotesViewModel(app: Application) : AndroidViewModel(app) {
-    private val root = File(app.filesDir, "vault")
+    val privateRoot = File(app.filesDir, "vault")
+    val root: File = io.github.shoalapps.squill.Prefs.notesFolder(app)?.let { File(it) } ?: privateRoot
     val vault = Vault(root)
+    val locked = LockedNotes(root)
+    private val allNotesKey = File(root, LockedNotes.ALL_NOTES_KEY)
+
+    /** True while all notes are encrypted and the password hasn't been given. */
+    private val _needsUnlock = MutableStateFlow(allNotesKey.exists())
+    val needsUnlock: StateFlow<Boolean> = _needsUnlock.asStateFlow()
+    private val _encrypted = MutableStateFlow(allNotesKey.exists())
+    val encrypted: StateFlow<Boolean> = _encrypted.asStateFlow()
     val peers = PeerStore(root)
     /** Held for each file operation, so sync and saving can't touch the same file at once. */
     private val vaultLock = Any()
@@ -57,6 +66,12 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     fun quick(action: String) { _quick.value = action }
     fun clearQuick() { _quick.value = null }
 
+    private val _incoming = MutableStateFlow<android.net.Uri?>(null)
+    /** A file another app asked Squill to open. */
+    val incoming: StateFlow<android.net.Uri?> = _incoming.asStateFlow()
+    fun open(uri: android.net.Uri) { _incoming.value = uri }
+    fun clearIncoming() { _incoming.value = null }
+
     private val indexFile = File(app.cacheDir, "notes-index.json")
     private val indexJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
     private val indexSerializer = kotlinx.serialization.builtins.ListSerializer(NoteInfo.serializer())
@@ -67,9 +82,14 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     private var indexWrite: kotlinx.coroutines.Job? = null
 
     init {
+        if (!allNotesKey.exists()) open()
+    }
+
+    private fun open() {
         viewModelScope.launch(queue) {
             // Show what was here last time straight away, then quietly catch up with any changes.
-            runCatching {
+            // Encrypted notes never go in this index, as it isn't encrypted.
+            if (vault.cipher == null) runCatching {
                 val saved = indexJson.decodeFromString(indexSerializer, indexFile.readText())
                 known = saved.associateByTo(HashMap(saved.size * 2)) { it.note.path }
                 _library.value = Library(saved)
@@ -77,6 +97,129 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
             seedOnce()
             reload()
         }
+    }
+
+    fun unlockAll(password: String, onDone: (Boolean) -> Unit) {
+        viewModelScope.launch(Dispatchers.Default) {
+            val key = runCatching { PasswordKey.unlock(allNotesKey, password) }.getOrNull()
+            if (key != null) {
+                vault.cipher = key
+                _needsUnlock.value = false
+                open()
+            }
+            withContext(Dispatchers.Main) { onDone(key != null) }
+        }
+    }
+
+    /** Forgets the key and everything read with it, until the password is given again. */
+    fun lockAll() {
+        if (!allNotesKey.exists()) return
+        viewModelScope.launch(queue) {
+            vault.cipher = null
+            known = HashMap(); knownSketches = HashMap(); knownDecks = HashMap(); knownPaintings = HashMap()
+            _library.value = Library()
+            _needsUnlock.value = true
+        }
+    }
+
+    /** Seals every note under a new password. */
+    fun encryptAll(password: String, onDone: (Result<Unit>) -> Unit) {
+        viewModelScope.launch(queue) {
+            val r = runCatching {
+                synchronized(vaultLock) {
+                    val key = PasswordKey.create(allNotesKey, password)
+                    vault.convert(key)
+                    indexFile.delete()
+                    reload()
+                }
+                _encrypted.value = true
+            }
+            withContext(Dispatchers.Main) { onDone(r) }
+        }
+    }
+
+    /** Takes encryption off, once the password has proved it's you. */
+    fun decryptAll(password: String, onDone: (Result<Unit>) -> Unit) {
+        viewModelScope.launch(queue) {
+            val r = runCatching {
+                PasswordKey.unlock(allNotesKey, password)
+                synchronized(vaultLock) {
+                    vault.convert(null)
+                    allNotesKey.delete()
+                    reload()
+                }
+                _encrypted.value = false
+            }
+            withContext(Dispatchers.Main) { onDone(r) }
+        }
+    }
+
+    /** Moves everything to a new home; the app restarts afterwards to open it from there. */
+    fun moveVault(to: File, onDone: (Result<Int>) -> Unit) {
+        viewModelScope.launch(queue) {
+            val r = runCatching { synchronized(vaultLock) { VaultMover.move(root, to) } }
+            withContext(Dispatchers.Main) { onDone(r) }
+        }
+    }
+
+    // The locked vault. Everything here runs in the queue, so nothing blocks the screen.
+    fun setUpVault(password: String, onDone: () -> Unit) = viewModelScope.launch(queue) {
+        runCatching { locked.setUp(password) }
+        withContext(Dispatchers.Main) { onDone() }
+    }
+
+    fun unlockVault(password: String, onDone: (Boolean) -> Unit) = viewModelScope.launch(queue) {
+        val ok = runCatching { locked.unlock(password) }.isSuccess
+        withContext(Dispatchers.Main) { onDone(ok) }
+    }
+
+    fun lockVault() = locked.lock()
+
+    fun lockedNotes(onDone: (List<LockedNote>) -> Unit) = viewModelScope.launch(queue) {
+        val list = runCatching { locked.notes() }.getOrDefault(emptyList())
+        withContext(Dispatchers.Main) { onDone(list) }
+    }
+
+    fun saveLocked(id: String, title: String, body: String, onDone: (LockedNote) -> Unit) = viewModelScope.launch(queue) {
+        runCatching { if (id.isEmpty()) locked.save(title, body) else locked.save(title, body, id) }
+            .onSuccess { n -> withContext(Dispatchers.Main) { onDone(n) } }
+            .onFailure { _problem.value = "Couldn't save that locked note" }
+    }
+
+    fun deleteLocked(id: String, onDone: () -> Unit) = viewModelScope.launch(queue) {
+        runCatching { locked.delete(id) }
+        withContext(Dispatchers.Main) { onDone() }
+    }
+
+    fun changeVaultPassword(old: String, new: String, onDone: (Boolean) -> Unit) = viewModelScope.launch(queue) {
+        val ok = runCatching { locked.changePassword(old, new) }.isSuccess
+        withContext(Dispatchers.Main) { onDone(ok) }
+    }
+
+    /** Seals a note and removes the ordinary copy for good: leaving it in the trash would defeat the point. */
+    fun moveToLocked(path: String, onDone: () -> Unit) = act<Unit>({ onDone() }) {
+        val note = vault.read(path)
+        locked.save(note.title, note.body)
+        vault.file(path).delete()
+    }
+
+    fun moveOutOfLocked(id: String, title: String, body: String, onDone: () -> Unit) = act<Unit>({ onDone() }) {
+        vault.create("", title.ifBlank { "Untitled" }, body)
+        locked.delete(id)
+    }
+
+    /** Adds a link from one note to another, and says whether that changed anything. */
+    fun linkNotes(fromPath: String, target: String, onDone: (Boolean) -> Unit) = act(onDone) {
+        val note = vault.read(fromPath)
+        val updated = Links.addLink(note.body, target, Links.Resolver(vault.stats().map { it.path }.filter { it.endsWith(".md") }))
+        if (updated != note.body) vault.save(fromPath, updated, note.pinned, note.colour)
+        updated != note.body
+    }
+
+    fun unlink(fromPath: String, target: String) = act<Unit> {
+        val note = vault.read(fromPath)
+        val updated = Links.removeLink(note.body, target)
+        if (updated != note.body) vault.save(fromPath, updated, note.pinned, note.colour)
     }
 
     private fun seedOnce() {
@@ -101,7 +244,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
             if (stat.path.endsWith(".ora", ignoreCase = true)) {
                 val old = knownPaintings[stat.path]
                 seenPaintings[stat.path] = if (old != null && old.modified == stat.modified && old.size == stat.size) old
-                else PaintingInfo(stat.path, stat.modified, stat.size, io.github.shoalapps.squill.paint.OraFile.thumbnail(vault.file(stat.path)))
+                else PaintingInfo(stat.path, stat.modified, stat.size, if (vault.cipher == null) io.github.shoalapps.squill.paint.OraFile.thumbnail(vault.file(stat.path)) else runCatching { io.github.shoalapps.squill.paint.OraFile.thumbnail(vault.readBytes(stat.path)) }.getOrNull())
                 return@forEach
             }
             if (stat.path.endsWith(".deck", ignoreCase = true)) {
@@ -133,7 +276,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         knownDecks = seenDecks
         knownPaintings = seenPaintings
         _library.value = Library(seen.values.toList(), vault.folders(), vault.trashed(), seenSketches.values.toList(), seenDecks.values.toList(), seenPaintings.values.toList())
-        if (changed) writeIndexSoon()
+        if (changed && vault.cipher == null) writeIndexSoon()
     }
 
     /** Written a moment later, not after every keystroke's save. */
@@ -141,7 +284,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         indexWrite?.cancel()
         indexWrite = viewModelScope.launch(queue) {
             kotlinx.coroutines.delay(3000)
-            runCatching {
+            if (vault.cipher == null && !allNotesKey.exists()) runCatching {
                 val tmp = File(indexFile.path + ".tmp")
                 tmp.writeText(indexJson.encodeToString(indexSerializer, known.values.toList()))
                 tmp.renameTo(indexFile)
@@ -251,22 +394,32 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
             val result = runCatching {
                 val name = context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
                     if (c.moveToFirst()) c.getString(0) else null
-                } ?: "Imported"
-                val stem = name.substringBeforeLast('.').ifBlank { "Imported" }
+                } ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() } ?: "Imported"
+                // Some apps hand over a file with no useful name, only a type.
+                val mime = context.contentResolver.getType(uri).orEmpty()
+                val typed = if ('.' in name) name else when {
+                    mime.startsWith("image/") -> "$name.png"
+                    mime.contains("wordprocessingml") -> "$name.docx"
+                    mime.contains("presentationml") -> "$name.pptx"
+                    mime.contains("markdown") || mime == "text/plain" -> "$name.md"
+                    else -> name
+                }
+                val stem = typed.substringBeforeLast('.').ifBlank { "Imported" }
                 val open = { context.contentResolver.openInputStream(uri) ?: throw OfficeException("That file couldn't be opened") }
                 when {
-                    name.endsWith(".ora", ignoreCase = true) -> {
+                    typed.endsWith(".ora", ignoreCase = true) -> {
                         val bytes = open().use { it.readBytes() }
                         io.github.shoalapps.squill.paint.OraFile.load(bytes)
                         vault.createFile(folder, stem, "ora") { it.write(bytes) }
                     }
-                    name.endsWith(".kra", ignoreCase = true) || listOf(".png", ".jpg", ".jpeg", ".webp").any { name.endsWith(it, ignoreCase = true) } -> {
+                    typed.endsWith(".kra", ignoreCase = true) || listOf(".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".heic", ".heif", ".avif").any { typed.endsWith(it, ignoreCase = true) } -> {
                         val painting = io.github.shoalapps.squill.paint.OraFile.fromPicture(open().use { it.readBytes() })
                         vault.createFile(folder, stem, "ora") { io.github.shoalapps.squill.paint.OraFile.save(painting.run { io.github.shoalapps.squill.paint.PaintingCopy(width, height, layers) }, it) }
                     }
-                    name.endsWith(".pptx", ignoreCase = true) -> vault.createDeck(folder, stem, open().use { Pptx.import(it) })
-                    name.endsWith(".docx", ignoreCase = true) -> vault.create(folder, stem, open().use { Docx.import(it) }).path
-                    else -> throw OfficeException("Squill can open .docx, .pptx, .ora, .kra and picture files")
+                    typed.endsWith(".md", ignoreCase = true) || typed.endsWith(".txt", ignoreCase = true) -> vault.create(folder, stem, open().use { it.readBytes().toString(Charsets.UTF_8) }).path
+                    typed.endsWith(".pptx", ignoreCase = true) -> vault.createDeck(folder, stem, open().use { Pptx.import(it) })
+                    typed.endsWith(".docx", ignoreCase = true) -> vault.create(folder, stem, open().use { Docx.import(it) }).path
+                    else -> throw OfficeException("Squill can open pictures, .ora, .kra, .md, .docx and .pptx files")
                 }
             }
             runCatching { reload() }
@@ -286,7 +439,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Syncs with every paired computer it can reach. When it's automatic, being out of range isn't worth mentioning. */
     fun sync(manual: Boolean = true) {
-        if (syncing || _peerList.value.isEmpty()) return
+        if (syncing || _peerList.value.isEmpty() || _needsUnlock.value) return
         syncing = true
         if (manual) _syncStatus.value = "Syncing…"
         viewModelScope.launch(Dispatchers.IO) {
