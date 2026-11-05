@@ -135,4 +135,13 @@ class OraFileTest {
             assertTrue(NoteCipher.isSealed(java.io.File(model.vault.root, otherPath).readBytes()))
         } finally { model.stop() }
     }
+
+    @Test fun aSmallFileAskingForHugeLayersIsRefusedBeforeUnpacking() {
+        val layers = (0 until 2000).joinToString("") { "<layer name=\"L$it\" src=\"data/one.png\" x=\"0\" y=\"0\"/>" }
+        val xml = "<image version=\"0.0.5\" w=\"8192\" h=\"8192\"><stack>$layers</stack></image>"
+        val out = java.io.ByteArrayOutputStream()
+        java.util.zip.ZipOutputStream(out).use { z -> z.putNextEntry(java.util.zip.ZipEntry("stack.xml")); z.write(xml.toByteArray()); z.closeEntry() }
+        val failure = runCatching { OraFile.load(out.toByteArray()) }.exceptionOrNull()
+        org.junit.Assert.assertTrue(failure?.message, failure?.message?.contains("too") == true)
+    }
 }

@@ -276,4 +276,16 @@ class NotionImportTest {
         assertEquals("Other", vault.read("${name.take(118)} 3/Other.md").body)
     }
 
+
+    @Test fun aDeletedPageComesBackOnImportingAgain() {
+        val vault = Vault(temp.newFolder("again"))
+        val export = zip("Page $a.md" to "words", "Other $b.md" to "more")
+        assertEquals(2, run(vault, export).imported)
+        assertTrue(vault.file("Page.md").delete())
+        val second = run(vault, export)
+        assertEquals(1, second.imported)
+        assertEquals(1, second.duplicates)
+        assertEquals("words", vault.read("Page.md").body)
+        assertEquals(2, run(vault, export).duplicates)
+    }
 }

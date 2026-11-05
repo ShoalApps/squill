@@ -883,3 +883,13 @@ class DeckEditTest {
         assertEquals(edited, Deck.parse(edited.toJson()))
     }
 }
+
+class OraStackTest {
+    @Test fun oddCharactersInAPathSurviveWritingAndReading() {
+        val entry = io.github.shoalapps.squill.paint.OraStack.Entry("A & B", "data/a&b<c>.png", 1f, true, io.github.shoalapps.squill.paint.Blend.NORMAL, false, false)
+        val parsed = io.github.shoalapps.squill.paint.OraStack.parse(io.github.shoalapps.squill.paint.OraStack.write(4, 4, listOf(entry)).toByteArray())
+        assertEquals("data/a&b<c>.png", parsed.entries.single().src)
+        assertEquals("A & B", parsed.entries.single().name)
+    }
+}
+

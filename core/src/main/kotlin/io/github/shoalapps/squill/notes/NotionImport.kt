@@ -105,8 +105,12 @@ object NotionImport {
                     val page = Page(path, marker)
                     fingerprints[marker] = page
                     if (vault.exists(marker)) {
-                        page.target = vault.readText(marker)
-                        duplicates++
+                        // A page deleted since the last import comes back, so its links work again.
+                        val here = vault.readText(marker)
+                        if (vault.exists(here)) {
+                            page.target = here
+                            duplicates++
+                        } else vault.file(marker).delete()
                     }
                     pages[path] = page
                 } catch (e: Exception) {

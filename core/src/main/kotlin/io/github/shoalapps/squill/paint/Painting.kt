@@ -297,7 +297,7 @@ object OraStack {
         append("<?xml version='1.0' encoding='UTF-8'?>\n<image version=\"0.0.5\" w=\"$width\" h=\"$height\" xres=\"72\" yres=\"72\">\n<stack>\n")
         // OpenRaster lists the top layer first.
         entries.forEach { e ->
-            append("<layer name=\"").append(io.github.shoalapps.squill.notes.esc(e.name)).append("\" src=\"").append(e.src).append("\" x=\"0\" y=\"0\" opacity=\"")
+            append("<layer name=\"").append(io.github.shoalapps.squill.notes.esc(e.name)).append("\" src=\"").append(io.github.shoalapps.squill.notes.esc(e.src)).append("\" x=\"0\" y=\"0\" opacity=\"")
             append(e.opacity).append("\" visibility=\"").append(if (e.visible) "visible" else "hidden").append("\" composite-op=\"").append(e.blend.ora).append('"')
             if (e.alphaLock) append(" alpha-preserve=\"true\"")
             if (e.clipped) append(" squill-clipped=\"true\"")

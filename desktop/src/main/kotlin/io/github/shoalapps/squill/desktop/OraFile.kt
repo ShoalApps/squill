@@ -34,6 +34,9 @@ object OraFile {
         val root = factory.newDocumentBuilder().parse(ByteArrayInputStream(xml)).documentElement
         val parsed = OraStack.parse(xml)
         require(parsed.width in 1..Painting.MAX_SIDE && parsed.height in 1..Painting.MAX_SIDE) { "That picture is too big to open" }
+        // A small file can ask for huge layers, so see if they'd fit before unpacking any.
+        val needed = parsed.entries.size.toLong() * parsed.width * parsed.height * 4
+        require(needed <= Runtime.getRuntime().maxMemory() / 2) { "That painting has too many large layers to open here" }
         var reason: String? = null
         fun unsupported() { reason = "Read only: this painting has features this editor cannot keep. Open it in the app that made it." }
         fun inspect(e: Element) {
