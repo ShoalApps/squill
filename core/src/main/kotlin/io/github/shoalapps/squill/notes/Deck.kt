@@ -67,6 +67,34 @@ data class Deck(val slides: List<Slide> = listOf(titleSlide(1))) {
     }
 }
 
+/** Changes to a deck, as new decks. A deck always keeps at least one slide. */
+private fun Deck.nextId(): Long = (slides.maxOfOrNull { it.id } ?: 0L) + 1
+
+fun Deck.addSlide(after: Int): Deck = copy(slides = slides.toMutableList().apply { add((after + 1).coerceIn(0, size), Deck.contentSlide(nextId())) })
+
+fun Deck.duplicateSlide(index: Int): Deck {
+    val source = slides.getOrNull(index) ?: return this
+    val id = nextId()
+    val copied = source.copy(id = id, elements = source.elements.mapIndexed { i, e -> e.copy(id = id * 10 + i + 1) })
+    return copy(slides = slides.toMutableList().apply { add(index + 1, copied) })
+}
+
+fun Deck.deleteSlide(index: Int): Deck =
+    if (slides.size <= 1 || index !in slides.indices) this else copy(slides = slides.filterIndexed { i, _ -> i != index })
+
+fun Deck.moveSlide(from: Int, to: Int): Deck {
+    if (from !in slides.indices || to !in slides.indices || from == to) return this
+    return copy(slides = slides.toMutableList().apply { add(to, removeAt(from)) })
+}
+
+fun Deck.setSlideNotes(index: Int, notes: String): Deck =
+    copy(slides = slides.mapIndexed { i, s -> if (i == index) s.copy(notes = notes) else s })
+
+fun Deck.setElementText(index: Int, elementId: Long, text: String): Deck =
+    copy(slides = slides.mapIndexed { i, s ->
+        if (i != index) s else s.copy(elements = s.elements.map { if (it.id == elementId) it.copy(text = text) else it })
+    })
+
 /** PowerPoint files, both ways. Reveal steps stay in Squill; everything visible on a slide travels. */
 object Pptx {
     private const val EMU = 9525.0 // Per canvas unit: 1280 units is PowerPoint's 12192000 wide.

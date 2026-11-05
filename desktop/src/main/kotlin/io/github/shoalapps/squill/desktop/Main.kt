@@ -199,7 +199,7 @@ private fun NotesPage(model: Model, library: Library, open: String?, onOpen: (St
                     Viewer(s.title, "Draw and edit this in Squill on your phone or tablet.") { SketchPane(s.sketch, Modifier.fillMaxSize()) }
                 }
                 open.endsWith(".deck") -> library.decks.firstOrNull { it.path == open }?.let { d ->
-                    Viewer(d.title, null) { DeckPane(d.deck, Modifier.fillMaxSize()) }
+                    Viewer(d.title, null) { androidx.compose.runtime.key(d.path) { DeckEditor(d.deck, { model.saveDeck(d.path, it) }, Modifier.fillMaxSize()) } }
                 }
                 open.endsWith(".ora") -> paintings.firstOrNull { it.path == open }?.let { p ->
                     val picture = remember(p.modified, p.size) { paintingPicture(model.vault.readBytes(p.path)) }

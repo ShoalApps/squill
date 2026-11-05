@@ -16,6 +16,7 @@ java {
 }
 
 dependencies {
+    testImplementation(compose.desktop.uiTestJUnit4)
     implementation(project(":core"))
     implementation("net.sf.kxml:kxml2:2.3.0")
     implementation(compose.desktop.currentOs)

@@ -818,3 +818,38 @@ class EncryptionSafetyTest {
     }
 }
 
+class DeckEditTest {
+    private val deck = Deck(listOf(Deck.titleSlide(1), Deck.contentSlide(2), Deck.contentSlide(3)))
+
+    @Test fun slidesMoveAndArriveWhereExpected() {
+        assertEquals(listOf(2L, 3L, 1L), deck.moveSlide(0, 2).slides.map { it.id })
+        assertEquals(listOf(3L, 1L, 2L), deck.moveSlide(2, 0).slides.map { it.id })
+        assertEquals(deck, deck.moveSlide(0, 9))
+        assertEquals(listOf(1L, 4L, 2L, 3L), deck.addSlide(0).slides.map { it.id })
+    }
+
+    @Test fun aDuplicateIsItsOwnSlide() {
+        val copied = deck.duplicateSlide(0)
+        assertEquals(4, copied.slides.size)
+        val (a, b) = copied.slides[0] to copied.slides[1]
+        assertEquals(a.elements.map { it.text }, b.elements.map { it.text })
+        val ids = copied.slides.flatMap { s -> s.elements.map { it.id } }
+        assertEquals(ids.size, ids.toSet().size)
+    }
+
+    @Test fun theLastSlideStays() {
+        val one = Deck()
+        assertEquals(one, one.deleteSlide(0))
+        assertEquals(listOf(1L, 3L), deck.deleteSlide(1).slides.map { it.id })
+    }
+
+    @Test fun textAndNotesChangeOnlyWhereAsked() {
+        val id = deck.slides[1].elements[0].id
+        val edited = deck.setElementText(1, id, "New").setSlideNotes(1, "Say this")
+        assertEquals("New", edited.slides[1].elements[0].text)
+        assertEquals("Say this", edited.slides[1].notes)
+        assertEquals(deck.slides[0], edited.slides[0])
+        assertEquals(edited, Deck.parse(edited.toJson()))
+    }
+}
+
