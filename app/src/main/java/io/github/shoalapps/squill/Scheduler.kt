@@ -7,11 +7,11 @@ import android.content.Intent
 import android.os.Build
 
 object Scheduler {
-    private fun pending(context: Context, id: Long): PendingIntent =
+    private fun pending(context: Context, id: Long, legacy: Boolean = false): PendingIntent =
         PendingIntent.getBroadcast(
             context,
             id.toInt(),
-            Intent(context, AlarmReceiver::class.java).putExtra(AlarmReceiver.EXTRA_ID, id),
+            Intent(context, AlarmReceiver::class.java).apply { if (!legacy) data = android.net.Uri.parse("squill:reminder/$id") }.putExtra(AlarmReceiver.EXTRA_ID, id),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
@@ -26,7 +26,9 @@ object Scheduler {
     }
 
     fun cancel(context: Context, id: Long) {
-        context.getSystemService(AlarmManager::class.java).cancel(pending(context, id))
+        val alarms = context.getSystemService(AlarmManager::class.java)
+        alarms.cancel(pending(context, id))
+        alarms.cancel(pending(context, id, legacy = true))
     }
 
     fun scheduleAll(context: Context) = Store.load(context).forEach { schedule(context, it) }

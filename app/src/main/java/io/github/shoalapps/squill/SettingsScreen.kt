@@ -372,7 +372,7 @@ private fun EncryptRow(notes: io.github.shoalapps.squill.notes.NotesViewModel) {
                     }) { Text(if (busy) "Working…" else "Stop encrypting") }
                 } else {
                     io.github.shoalapps.squill.notes.NewPassword(
-                        "Everything's sealed on this device, though file names stay visible. Backups you make aren't encrypted, and copies synced to your computer are only encrypted if you encrypt that folder too. For a note's name to be hidden too, use Locked notes.",
+                        "Everything's sealed on this device, though file names stay visible. Backups you make aren't encrypted, and copies synced to your computer are only encrypted if you encrypt that folder too. Reminders stay unencrypted, so they can still ring while your notes are locked. For a note's name to be hidden too, use Locked notes.",
                         if (busy) "Working…" else "Encrypt", busy = busy,
                         onDone = { p -> busy = true; notes.encryptAll(p) { r -> busy = false; r.onSuccess { asking = false }.onFailure { failure = it.message } } },
                     )

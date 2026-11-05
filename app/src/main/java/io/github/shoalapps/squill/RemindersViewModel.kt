@@ -38,7 +38,6 @@ class RemindersViewModel(app: Application) : AndroidViewModel(app) {
     fun save(reminder: Reminder) {
         val app = getApplication<Application>()
         Store.update(app) { list -> list.filterNot { it.id == reminder.id } + reminder }
-        Scheduler.schedule(app, reminder)
     }
 
     fun toggleDone(reminder: Reminder) {

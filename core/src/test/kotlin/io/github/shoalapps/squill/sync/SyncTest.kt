@@ -1,5 +1,8 @@
 package io.github.shoalapps.squill.sync
 
+import io.github.shoalapps.squill.Reminder
+import io.github.shoalapps.squill.reminders.ReminderStore
+
 import io.github.shoalapps.squill.notes.LockedNotes
 import io.github.shoalapps.squill.notes.NoteCipher
 import io.github.shoalapps.squill.notes.PasswordKey
@@ -80,6 +83,77 @@ class SyncFlowTest {
         val f = File(v.root, path); f.parentFile?.mkdirs(); f.writeText(text); f.setLastModified(modified)
     }
     private fun read(v: Vault, path: String) = File(v.root, path).readText()
+
+    @Test fun remindersTravelBothWaysAndDeletionsStayDeleted() {
+        val phoneStore = ReminderStore(phone)
+        val deskStore = ReminderStore(desk)
+        phoneStore.update { listOf(Reminder(1, "Tea", whenMillis = 100)) }
+        sync()
+        assertEquals(phoneStore.entries(), deskStore.entries())
+        deskStore.update { it.map { r -> r.copy(title = "Coffee", done = true) } }
+        sync()
+        assertEquals("Coffee", phoneStore.items().single().title)
+        assertTrue(phoneStore.items().single().done)
+        phoneStore.update { emptyList() }
+        sync(); sync()
+        assertTrue(deskStore.items().isEmpty())
+        assertEquals(phoneStore.entries(), deskStore.entries())
+        assertTrue(desk.stats().isEmpty())
+        assertTrue(desk.trashed().isEmpty())
+    }
+
+    @Test fun concurrentReminderEditsAndDeletesConverge() {
+        val p = ReminderStore(phone)
+        val d = ReminderStore(desk)
+        p.update(100) { listOf(Reminder(1, "Tea", whenMillis = 100)) }
+        sync()
+        p.update(200) { it.map { r -> r.copy(title = "Phone") } }
+        d.update(300) { it.map { r -> r.copy(title = "Desk") } }
+        sync()
+        assertEquals("Desk", p.items().single().title)
+        assertEquals(p.entries(), d.entries())
+        // Both clocks moved backwards, but edits still advance past what each has observed.
+        p.update(1) { it.map { r -> r.copy(title = "Again") } }
+        d.update(2) { emptyList() }
+        sync(); sync()
+        assertEquals(p.entries(), d.entries())
+    }
+
+    @Test fun oldServersStillSyncNotes() {
+        server.close()
+        server = SyncProtocol.Server(desk, deskPeers, "Desk", port = 0, supportsReminders = false)
+        server.start()
+        phonePeers.save(peer.copy(port = server.boundPort))
+        write(phone, "Old.md", "notes still work")
+        ReminderStore(phone).update {
+            listOf(Reminder(1, "Tea", whenMillis = 100))
+        }
+        sync()
+        assertEquals("notes still work", read(desk, "Old.md"))
+        assertFalse(desk.exists(ReminderStore.PATH))
+        assertEquals(0, sync().total)
+    }
+
+    @Test fun oldClientsCanUseTheOriginalNoteRequests() {
+        val reminders = ReminderStore(desk)
+        reminders.update { listOf(Reminder(1, "Tea", whenMillis = 100)) }
+        Socket("127.0.0.1", server.boundPort).use { socket ->
+            socket.soTimeout = 5000
+            SealedChannel(socket, peer.secret.toByteArray(), true, SyncProtocol.hello("SYNC", phonePeers.selfId)).use { ch ->
+                // These are the original protocol's requests, with no reminder capability or operation.
+                ch.send("{\"op\":\"LIST\"}".toByteArray())
+                ch.receive()
+                assertEquals("[]", ch.receive().toString(Charsets.UTF_8))
+                ch.send("{\"op\":\"PUT\",\"path\":\"Old.md\"}".toByteArray())
+                ch.send("old client".toByteArray())
+                assertTrue(ch.receive().toString(Charsets.UTF_8).contains("\"ok\":true"))
+                ch.send("{\"op\":\"DONE\"}".toByteArray())
+                ch.receive()
+            }
+        }
+        assertEquals("old client", desk.read("Old.md").body)
+        assertEquals("Tea", reminders.items().single().title)
+    }
 
     @Test fun pairingGivesBothTheSameKey() {
         assertEquals("Desk", peer.name)
@@ -165,6 +239,9 @@ class SyncFlowTest {
     @Test fun eachSideStaysEncryptedUnderItsOwnPassword() {
         write(phone, "A.md", "from the phone")
         write(desk, "B.md", "from the desk")
+        ReminderStore(phone).update {
+            listOf(Reminder(1, "Encrypted tea", whenMillis = 100))
+        }
         phone.convert(PasswordKey.create(File(phone.root, LockedNotes.ALL_NOTES_KEY), "phone password"))
         desk.convert(PasswordKey.create(File(desk.root, LockedNotes.ALL_NOTES_KEY), "desk password"))
         sync()
@@ -173,10 +250,28 @@ class SyncFlowTest {
             assertEquals(2, scan(v).size)
             scan(v).forEach { assertTrue(it.path, NoteCipher.isSealed(it.readBytes())) }
         }
+        listOf(phone, desk).forEach { v ->
+            assertTrue(NoteCipher.isSealed(v.file(ReminderStore.PATH).readBytes()))
+            assertEquals("Encrypted tea", ReminderStore(v).items().single().title)
+        }
         assertEquals("from the phone", desk.read("A.md").body)
         assertEquals("from the desk", phone.read("B.md").body)
         // Their sealed bytes differ, but the notes match, so nothing more needs doing.
         assertEquals(0, sync().total)
+    }
+
+    @Test fun aPhonesPrivateRemindersSyncWithAnEncryptedComputer() {
+        val phoneFile = File(dir.root, "phone-reminders.json")
+        val phoneStore = ReminderStore(phoneFile) { "phone" }
+        phoneStore.update { it + io.github.shoalapps.squill.Reminder(1, "Ring me", whenMillis = 5000) }
+        desk.convert(PasswordKey.create(File(desk.root, LockedNotes.ALL_NOTES_KEY), "desk password"))
+        val s = SyncProtocol.sync(phone, phonePeers, phonePeers.peers().single(), phonePeers.selfId, "Phone", reminders = phoneStore)
+        assertEquals(1, s.reminders)
+        assertEquals("Ring me", ReminderStore(desk).items().single().title)
+        assertTrue(NoteCipher.isSealed(File(desk.root, ReminderStore.PATH).readBytes()))
+        // Still readable on the phone with nothing unlocked, and not left in the notes folder.
+        assertEquals("Ring me", ReminderStore(phoneFile) { "phone" }.items().single().title)
+        assertFalse(File(phone.root, ReminderStore.PATH).exists())
     }
 
     @Test fun anInterruptedSyncIsNotMarkedAsDone() {

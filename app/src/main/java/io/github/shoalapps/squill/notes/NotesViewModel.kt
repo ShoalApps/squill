@@ -1,5 +1,7 @@
 package io.github.shoalapps.squill.notes
 
+import io.github.shoalapps.squill.Store
+
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -82,6 +84,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     private var indexWrite: kotlinx.coroutines.Job? = null
 
     init {
+        Store.onEdit = { syncSoon() }
         if (!allNotesKey.exists()) open()
     }
 
@@ -461,6 +464,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         syncing = true
         if (manual) _syncStatus.value = "Syncing…"
         viewModelScope.launch(Dispatchers.IO) {
+            val remindersBefore = Store.load(getApplication())
             val skip = setOfNotNull(openFile)
             var moved = 0
             var failure: String? = null
@@ -469,6 +473,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
                 result.onSuccess { moved += it.total }
                 result.onFailure { failure = it.message ?: "Couldn't reach ${peer.name}" }
             }
+            Store.received(getApplication(), remindersBefore)
             syncing = false
             withContext(queue) { synchronized(vaultLock) { runCatching { reload() } } }
             _peerList.value = peers.peers()
@@ -478,13 +483,13 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun syncOne(peer: Peer, skip: Set<String>): SyncProtocol.Result = try {
-        SyncProtocol.sync(vault, peers, peer, peers.selfId, deviceName, skip, vaultLock, timeoutMillis = 2500)
+        SyncProtocol.sync(vault, peers, peer, peers.selfId, deviceName, skip, vaultLock, timeoutMillis = 2500, beforeReminders = { Store.arriving(getApplication(), it) }, reminders = Store.repository(getApplication()))
     } catch (e: java.io.IOException) {
         // Addresses change: ask who's on the network before giving up.
         val found = SyncProtocol.discover().firstOrNull { it.id == peer.id } ?: throw e
         val moved = peer.copy(address = found.address, port = found.port)
         peers.save(moved)
-        SyncProtocol.sync(vault, peers, moved, peers.selfId, deviceName, skip, vaultLock, timeoutMillis = 2500)
+        SyncProtocol.sync(vault, peers, moved, peers.selfId, deviceName, skip, vaultLock, timeoutMillis = 2500, beforeReminders = { Store.arriving(getApplication(), it) }, reminders = Store.repository(getApplication()))
     }
 
     /** Looks for computers running Squill on this network. */

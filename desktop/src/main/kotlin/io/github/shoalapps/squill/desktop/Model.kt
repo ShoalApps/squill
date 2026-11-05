@@ -1,5 +1,8 @@
 package io.github.shoalapps.squill.desktop
 
+import io.github.shoalapps.squill.Reminder
+import io.github.shoalapps.squill.reminders.ReminderStore
+
 import io.github.shoalapps.squill.notes.Deck
 import io.github.shoalapps.squill.notes.DeckInfo
 import io.github.shoalapps.squill.notes.Library
@@ -35,6 +38,14 @@ data class PaintingFile(val path: String, val modified: Long, val size: Long) {
 /** The desktop's view of a folder of notes. The folder is the truth: edits from other programs turn up here too. */
 class Model(val root: File, private val hosting: Boolean = true, private val deviceName: String = hostName()) {
     val vault = Vault(root)
+    val reminderStore = ReminderStore(vault)
+    private val _reminders = MutableStateFlow<List<Reminder>>(emptyList())
+    val reminders: StateFlow<List<Reminder>> = _reminders.asStateFlow()
+    fun changeReminders(change: (List<Reminder>) -> List<Reminder>) =
+        background({ result -> result.onFailure { _problem.value = it.message } }) {
+            reminderStore.update(change = change)
+            reloadNow()
+        }
     val peers = PeerStore(root)
     private val lock = Any()
     private val worker = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "squill-files").apply { isDaemon = true } }
@@ -105,6 +116,7 @@ class Model(val root: File, private val hosting: Boolean = true, private val dev
                 known = HashMap(); knownSketches = HashMap(); knownDecks = HashMap()
                 _library.value = Library()
                 _paintings.value = emptyList()
+                _reminders.value = emptyList()
                 _needsUnlock.value = true
             }
         }
@@ -139,6 +151,7 @@ class Model(val root: File, private val hosting: Boolean = true, private val dev
     }
 
     private fun reloadIfChanged() {
+        _reminders.value = reminderStore.items()
         val stats = vault.stats()
         val stamp = stats.fold(stats.size.toLong()) { h, s -> h * 31 + s.path.hashCode() + s.modified + s.size }
         if (stamp != lastStamp) reloadNow()
@@ -146,6 +159,7 @@ class Model(val root: File, private val hosting: Boolean = true, private val dev
 
     /** Re-reads only what's changed. */
     fun reloadNow() = synchronized(lock) {
+        _reminders.value = reminderStore.items()
         val stats = vault.stats()
         lastStamp = stats.fold(stats.size.toLong()) { h, s -> h * 31 + s.path.hashCode() + s.modified + s.size }
         val notes = HashMap<String, NoteInfo>(stats.size * 2)

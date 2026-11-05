@@ -23,6 +23,8 @@ data class Reminder(
     val snoozedUntil: Long = 0,
     /** When this last rang, or 0. A one-off that never rang was missed while the phone was off. */
     val rungAt: Long = 0,
+    /** Shared identity. Empty only for old backups and a reminder before its first save. */
+    val syncId: String = "",
 ) {
     /** The next time this should ring after [now], or null if it never will again. */
     fun nextAfter(now: Long): Long? {
@@ -60,6 +62,9 @@ data class Reminder(
     fun missed(now: Long): Boolean = !done && (
         (repeat == Repeat.NONE && whenMillis <= now && rungAt == 0L) || snoozedUntil in 1..now
     )
+
+    /** An overdue copy arriving from another device must not ring as a missed local alarm. */
+    fun arrived(now: Long): Reminder = if (missed(now)) rang(now).copy(snoozedUntil = 0) else this
 
     /** This reminder just after ringing at [now]. A snooze still to come stays in place. */
     fun rang(now: Long): Reminder = copy(rungAt = now, snoozedUntil = snoozedUntil.takeIf { it > now } ?: 0)
@@ -105,11 +110,12 @@ fun quickTimes(now: Long): List<Pair<String, Long>> {
  * Old one-offs and snoozes count as already rung, or restoring would set them all off at the next restart.
  */
 fun mergeBackup(current: List<Reminder>, backup: List<Reminder>, now: Long): List<Reminder> {
-    val usable = backup.filter { it.id > 0 && it.title.isNotBlank() }.distinctBy { it.id }.map {
+    val usable = backup.filter { it.id > 0 && it.title.isNotBlank() }.distinctBy { it.syncId.ifEmpty { "legacy:${it.id}" } }.map {
         if (it.missed(now)) it.copy(rungAt = now, snoozedUntil = 0) else it
     }
-    val ids = usable.map { it.id }.toSet()
-    return current.filterNot { it.id in ids } + usable
+    return current.filterNot { existing -> usable.any { restored ->
+        if (restored.syncId.isNotEmpty()) restored.syncId == existing.syncId else restored.id == existing.id
+    } } + usable
 }
 
 /** The local calendar day of [millis] as UTC midnight, which is what Material's date picker works in. */

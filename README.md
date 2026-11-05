@@ -19,7 +19,7 @@ Notes, links and reminders, as ordinary files on your phone. A Material You note
 
 - **Squilly's tour** shows what each part of Squill does on first run, and again from Settings.
 - **Where notes live**: private to Squill, or `Documents/Squill` as ordinary files other apps can open. Settings moves everything, and only removes the originals once it has all arrived.
-- **Encrypt all notes**: AES-256-GCM under a password that's never stored. Squill asks for it when it opens and locks after five minutes away. File names stay visible, and backups aren't encrypted. The computer can encrypt its folder too, under its own password, in Devices.
+- **Encrypt all notes**: AES-256-GCM under a password that's never stored. Squill asks for it when it opens and locks after five minutes away. File names stay visible, and backups aren't encrypted. The computer can encrypt its folder too, under its own password, in Devices. Reminders on the phone stay unencrypted, in private storage, so they can still ring while notes are locked.
 - **Locked notes**: a separate encrypted vault with its own password, names included. It stays out of the list, search, graph and sync, and locks when you leave.
 - **Forgetting a password loses those notes for good.** There's no recovery.
 - **Graph linking**: drag one note onto another on the phone to link them, with Undo.
@@ -59,7 +59,7 @@ Not everything in Krita is here: there are no layer groups, filter masks, vector
 - [Squill for Linux, Windows and Mac](https://github.com/ShoalApps/squill/releases/tag/desktop-latest) keeps your notes as ordinary files in a folder, so other Markdown apps can open it too
 - Write and read notes there with a live preview, backlinks, the graph, tags and search. Draw there with a mouse or tablet, with an eraser, selection, and undo. Edit slide text, speaker notes and order too. Paintings and the layout of slides are viewed there and edited on your phone
 - Pair your phone with a one-time code. They then sync directly over your own network, encrypted, with no account and no cloud
-- If both change the same note before syncing, both versions are kept. Deletions go to the trash on the other device. Reminders stay on the phone
+- If both change the same note before syncing, both versions are kept. Deletions go to the trash on the other device. Reminders sync too, and only the phone rings
 
 ## Reminders
 

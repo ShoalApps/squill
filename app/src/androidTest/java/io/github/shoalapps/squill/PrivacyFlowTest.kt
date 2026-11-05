@@ -162,6 +162,27 @@ class PrivacyFlowTest {
         assertEquals(1, io.github.shoalapps.squill.notes.EvernoteImport.import(vault, enex.toByteArray().inputStream(), "Travel.enex", picture).duplicates)
     }
 
+    @Test fun remindersStillWorkWhileNotesAreLocked() {
+        val soon = System.currentTimeMillis() + 3_600_000
+        Store.update(context) { it.filterNot { r -> r.title == "Take the tablets" } + Reminder(777_001, "Take the tablets", whenMillis = soon) }
+        var done = false
+        rule.runOnUiThread { vm.encryptAll("correct horse") { done = true } }
+        waitFor { done }
+        rule.runOnUiThread { vm.lockAll() }
+        rule.waitUntilExactlyOneExists(hasText("Your notes are locked"), 8000)
+        // This is what an alarm reads after a reboot, before any password has been given.
+        assertEquals("Take the tablets", Store.load(context).first { it.title == "Take the tablets" }.title)
+        Store.update(context) { list -> list.map { if (it.title == "Take the tablets") it.rang(soon) else it } }
+        assertTrue(Store.load(context).first { it.title == "Take the tablets" }.rungAt > 0)
+        var ok = false
+        rule.runOnUiThread { vm.unlockAll("correct horse") { ok = it } }
+        waitFor { ok }
+        done = false
+        rule.runOnUiThread { vm.decryptAll("correct horse") { done = true } }
+        waitFor { done }
+        Store.update(context) { list -> list.filterNot { it.title == "Take the tablets" } }
+    }
+
     @Test fun aPictureOpensAsAPainting() {
         val png = File(context.cacheDir, "Sunset.png")
         val bmp = android.graphics.Bitmap.createBitmap(40, 30, android.graphics.Bitmap.Config.ARGB_8888)

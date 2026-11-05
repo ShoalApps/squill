@@ -1,6 +1,8 @@
 package io.github.shoalapps.squill.sync
 
 import io.github.shoalapps.squill.notes.Vault
+import io.github.shoalapps.squill.reminders.ReminderStore
+import io.github.shoalapps.squill.reminders.ReminderEntry
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -103,7 +105,7 @@ class SealedChannel(socket: Socket, secret: ByteArray, isClient: Boolean, greeti
 private data class Request(val op: String, val path: String = "", val data: Int = 0, val id: String = "", val name: String = "")
 
 @Serializable
-private data class Reply(val ok: Boolean = true, val error: String = "", val id: String = "", val name: String = "", val secret: String = "")
+private data class Reply(val ok: Boolean = true, val error: String = "", val id: String = "", val name: String = "", val secret: String = "", val reminders: Boolean = false, val changed: Boolean = false)
 
 object SyncProtocol {
     const val PORT = 47800
@@ -147,7 +149,7 @@ object SyncProtocol {
      * The desktop's side: listens for paired devices, and answers "is anyone there?" on the local
      * network with its name and port, and nothing more.
      */
-    class Server(private val vault: Vault, private val peers: PeerStore, private val deviceName: String, private val port: Int = PORT, private val lock: Any = Any()) : Closeable {
+    class Server(private val vault: Vault, private val peers: PeerStore, private val deviceName: String, private val port: Int = PORT, private val lock: Any = Any(), private val supportsReminders: Boolean = true) : Closeable {
         private val server = ServerSocket()
         private var probe: DatagramSocket? = null
         private var accepting: Thread? = null
@@ -228,8 +230,22 @@ object SyncProtocol {
             when (r.op) {
                 "LIST" -> {
                     val list = synchronized(lock) { Manifest(vault).scan().values.toList() }
-                    ch.reply()
+                    if (supportsReminders) ch.reply(Reply(reminders = true))
+                    else ch.send("{\"ok\":true}".toByteArray())
                     ch.send(json.encodeToString(ListSerializer(FileState.serializer()), list).toByteArray())
+                }
+                "REMINDERS" -> {
+                    val incoming = ch.receive()
+                    if (!supportsReminders) { ch.reply(Reply(ok = false, error = "Unknown request")); return }
+                    val (merged, changed) = synchronized(lock) {
+                        val store = ReminderStore(vault)
+                        val before = store.entries()
+                        val merged = store.receive(ReminderStore.decode(incoming))
+                        merged to (merged != before)
+                    }
+                    ch.reply(Reply(changed = changed))
+                    ch.send(ReminderStore.encode(merged))
+                    onChange()
                 }
                 "GET" -> {
                     val data = synchronized(lock) { checked(r.path); vault.readBytes(r.path) }
@@ -314,19 +330,19 @@ object SyncProtocol {
         }
     }
 
-    data class Result(val pulled: Int, val pushed: Int, val trashed: Int, val conflicts: Int) {
-        val changedHere get() = pulled + trashed + conflicts
-        val total get() = pulled + pushed + trashed + conflicts
+    data class Result(val pulled: Int, val pushed: Int, val trashed: Int, val conflicts: Int, val reminders: Int = 0) {
+        val changedHere get() = pulled + trashed + conflicts + reminders
+        val total get() = pulled + pushed + trashed + conflicts + reminders
     }
 
     /**
      * Brings this device and a paired one into line. Nothing's marked as matched until everything
      * has gone through, so an interrupted sync simply carries on next time.
      */
-    fun sync(vault: Vault, peers: PeerStore, peer: Peer, selfId: String, selfName: String, skip: Set<String> = emptySet(), lock: Any = Any(), timeoutMillis: Int = 5000): Result {
+    fun sync(vault: Vault, peers: PeerStore, peer: Peer, selfId: String, selfName: String, skip: Set<String> = emptySet(), lock: Any = Any(), timeoutMillis: Int = 5000, beforeReminders: (List<ReminderEntry>) -> Unit = {}, reminders: ReminderStore = ReminderStore(vault)): Result {
         connect(peer.address, peer.port, timeoutMillis).use { socket ->
             SealedChannel(socket, peer.secret.toByteArray(), true, hello("SYNC", selfId)).use { ch ->
-                ch.request(Request("LIST"))
+                val capabilities = ch.request(Request("LIST"))
                 val there = json.decodeFromString(ListSerializer(FileState.serializer()), ch.receive().toString(Charsets.UTF_8)).associateBy { it.path }
                 // The server only lists safe names, but it's still another machine's word.
                 there.keys.forEach(::checked)
@@ -358,12 +374,20 @@ object SyncProtocol {
                         }
                     }
                 }
+                var reminderChanges = 0
+                if (capabilities.reminders) {
+                    val mine = synchronized(lock) { reminders.entries() }
+                    val reply = ch.request(Request("REMINDERS"), ReminderStore.encode(mine))
+                    val incoming = ReminderStore.decode(ch.receive())
+                    val merged = synchronized(lock) { reminders.receive(incoming, beforeReminders) }
+                    if (reply.changed || merged != mine) reminderChanges = 1
+                }
                 ch.request(Request("DONE"))
                 val after = synchronized(lock) { Manifest(vault).scan() }
                 val skipped = skip.mapNotNull { p -> base[p]?.let { p to it } }.toMap()
                 peers.saveBase(peer.id, after.mapValues { it.value.hash }.filterKeys { it !in skip } + skipped)
                 peers.save(peer.copy(lastSync = System.currentTimeMillis()))
-                return Result(pulled, pushed, trashed, conflicts)
+                return Result(pulled, pushed, trashed, conflicts, reminderChanges)
             }
         }
     }

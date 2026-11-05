@@ -1,5 +1,7 @@
 package io.github.shoalapps.squill.notes
 
+import io.github.shoalapps.squill.reminders.ReminderStore
+
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
@@ -358,13 +360,15 @@ class Vault(val root: File) {
     }
 
     /** Seals or unseals every file, one at a time, so an interruption leaves everything readable. */
-    private fun convertible(): List<File> = (stats().map { at(it.path) } + (if (trash.exists()) trash.walkTopDown().filter { it.isFile && it.extension.lowercase() in KINDS }.toList() else emptyList()))
+    private fun convertible(): List<File> = (stats().map { at(it.path) } + listOf(at(ReminderStore.PATH)).filter { it.exists() } + (if (trash.exists()) trash.walkTopDown().filter { it.isFile && it.extension.lowercase() in KINDS }.toList() else emptyList()))
 
     /**
      * Finishes a conversion a crash cut short: once unlocked, anything still plain gets sealed, and
      * half-written copies go. Reading a mix of sealed and plain was already safe, but it shouldn't stay.
      */
-    fun finishSealing() {
+    fun finishSealing() = ReminderStore.transaction { finishSealingFiles() }
+
+    private fun finishSealingFiles() {
         val key = cipher ?: return
         root.walkTopDown().filter { it.isFile && it.name.endsWith(".converting.tmp") }.forEach { it.delete() }
         convertible().forEach { file ->
@@ -376,7 +380,9 @@ class Vault(val root: File) {
         }
     }
 
-    fun convert(to: NoteCipher?) {
+    fun convert(to: NoteCipher?) = ReminderStore.transaction { convertFiles(to) }
+
+    private fun convertFiles(to: NoteCipher?) {
         val files = convertible()
         // Everything is written beside the originals first, so running out of space or hitting an
         // unreadable file changes nothing at all.

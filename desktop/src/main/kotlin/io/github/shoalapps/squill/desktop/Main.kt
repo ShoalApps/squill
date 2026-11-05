@@ -89,7 +89,7 @@ import java.net.URI
 private val Light = lightColorScheme(primary = Color(0xFF4A4FA3), onPrimary = Color.White, primaryContainer = Color(0xFFE0E0FF), onPrimaryContainer = Color(0xFF05006C), secondaryContainer = Color(0xFFE1E0F9), background = Color(0xFFFBF8FF), surface = Color(0xFFFBF8FF), onSurface = Color(0xFF1B1B21))
 private val Dark = darkColorScheme(primary = Color(0xFFBEC2FF), onPrimary = Color(0xFF181C6F), primaryContainer = Color(0xFF313587), onPrimaryContainer = Color(0xFFE0E0FF), secondaryContainer = Color(0xFF424559), background = Color(0xFF131318), surface = Color(0xFF131318), onSurface = Color(0xFFE4E1E9))
 
-private enum class Page(val label: String) { NOTES("Notes"), GRAPH("Graph"), DEVICES("Devices") }
+private enum class Page(val label: String) { NOTES("Notes"), GRAPH("Graph"), REMINDERS("Reminders"), DEVICES("Devices") }
 
 /** Where notes live, remembered between runs. */
 private object Settings {
@@ -128,7 +128,7 @@ fun App(model: Model, dark: Boolean = androidx.compose.foundation.isSystemInDark
             }
             Row(Modifier.fillMaxSize()) {
                 NavigationRail {
-                    Page.entries.forEach { p -> NavigationRailItem(page == p, { page = p }, icon = { Text(when (p) { Page.NOTES -> "✎"; Page.GRAPH -> "◉"; Page.DEVICES -> "⇄" }) }, label = { Text(p.label) }) }
+                    Page.entries.forEach { p -> NavigationRailItem(page == p, { page = p }, icon = { Text(when (p) { Page.NOTES -> "✎"; Page.GRAPH -> "◉"; Page.REMINDERS -> "◷"; Page.DEVICES -> "⇄" }) }, label = { Text(p.label) }) }
                 }
                 when (page) {
                     Page.NOTES -> NotesPage(model, library, open) { open = it }
@@ -137,6 +137,7 @@ fun App(model: Model, dark: Boolean = androidx.compose.foundation.isSystemInDark
                         page = Page.NOTES
                         if (path != null) open = path else model.create("", node.title) { open = it.path }
                     }, Modifier.weight(1f).fillMaxHeight(), onLink = { from, target, done -> model.linkNotes(from, target, done) }, onUnlink = { from, target -> model.unlink(from, target) })
+                    Page.REMINDERS -> RemindersPage(model)
                     Page.DEVICES -> DevicesPage(model, onChooseFolder)
                 }
             }

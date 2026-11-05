@@ -116,7 +116,8 @@ class RingTest {
         val text = Store.export(context)
         Store.save(context, emptyList())
         assertEquals(1, Store.import(context, text))
-        assertEquals(r, stored(r.id))
+        // The same reminder, which now also has an identity to sync by.
+        assertEquals(r, stored(r.id)?.copy(syncId = ""))
         assertTrue(runCatching { Store.import(context, "not a backup") }.isFailure)
         assertEquals(1, Store.load(context).size)
     }
