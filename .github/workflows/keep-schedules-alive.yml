@@ -19,10 +19,21 @@ jobs:
     steps:
       - name: Enable this repo's workflows
         run: |
-          set -euo pipefail
-          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows" \
-            --jq '.workflows[] | select(.path | startswith(".github/workflows/")) | select(.state == "active" or .state == "disabled_inactivity") | "\(.id) \(.state) \(.path)"' |
-          while read -r id state path; do
-            gh api --method PUT "repos/$GITHUB_REPOSITORY/actions/workflows/$id/enable"
-            echo "$state -> enabled: $path"
+          set -uo pipefail
+          # GitHub's API has bad minutes. One hiccup mustn't count as a stopped schedule.
+          enable_all() {
+            local list id state path
+            list=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows" \
+              --jq '.workflows[] | select(.path | startswith(".github/workflows/")) | select(.state == "active" or .state == "disabled_inactivity") | "\(.id) \(.state) \(.path)"') || return 1
+            [ -n "$list" ] || return 1
+            while read -r id state path; do
+              gh api --method PUT "repos/$GITHUB_REPOSITORY/actions/workflows/$id/enable" || return 1
+              echo "$state -> enabled: $path"
+            done <<< "$list"
+          }
+          for wait in 30 120 300 600; do
+            enable_all && exit 0
+            echo "GitHub's API failed; trying again in $wait seconds."
+            sleep "$wait"
           done
+          enable_all
