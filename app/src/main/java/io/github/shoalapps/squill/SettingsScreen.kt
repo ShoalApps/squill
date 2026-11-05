@@ -114,6 +114,28 @@ fun SettingsScreen(notes: io.github.shoalapps.squill.notes.NotesViewModel, onBac
                 { "That Keep zip couldn't be read" }))
         }
     }
+    val importNotion = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) notes.bulk({ vault ->
+            context.contentResolver.openInputStream(uri)!!.use { input ->
+                io.github.shoalapps.squill.notes.NotionImport.import(vault, input) { bytes ->
+                    val painting = io.github.shoalapps.squill.paint.OraFile.fromPicture(bytes)
+                    java.io.ByteArrayOutputStream().also { out ->
+                        io.github.shoalapps.squill.paint.OraFile.save(painting.frozen(), out)
+                    }.toByteArray()
+                }
+            }
+        }) { result ->
+            toast(result.fold({ r ->
+                listOfNotNull(
+                    "Added ${r.imported} notes",
+                    "${r.duplicates} were already here".takeIf { r.duplicates > 0 },
+                    "${r.skippedAttachments} attachments couldn't come in".takeIf { r.skippedAttachments > 0 },
+                    "${r.failed} couldn't be read".takeIf { r.failed > 0 },
+                ).joinToString(". ")
+            },
+                { "That Notion zip couldn't be read" }))
+        }
+    }
     val importEvernote = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) notes.bulk({ vault ->
             var imported = 0; var duplicates = 0; var skipped = 0; var failed = 0
@@ -234,6 +256,11 @@ fun SettingsScreen(notes: io.github.shoalapps.squill.notes.NotesViewModel, onBac
                 headlineContent = { Text("Google Keep") },
                 supportingContent = { Text("Download your Keep notes as a zip from Google Takeout, then open it here") },
                 modifier = Modifier.clickable { importKeep.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream")) },
+            )
+            ListItem(
+                headlineContent = { Text("Notion") },
+                supportingContent = { Text("Export as Markdown & CSV from Notion, then open the zip here") },
+                modifier = Modifier.clickable { importNotion.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream")) },
             )
             ListItem(
                 headlineContent = { Text("Evernote") },

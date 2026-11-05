@@ -183,6 +183,32 @@ class PrivacyFlowTest {
         Store.update(context) { list -> list.filterNot { it.title == "Take the tablets" } }
     }
 
+    @Test fun aNotionExportKeepsItsPagesAndLinks() {
+        val id1 = "0123456789abcdef0123456789abcdef"; val id2 = "fedcba9876543210fedcba9876543210"
+        val bmp = android.graphics.Bitmap.createBitmap(40, 30, android.graphics.Bitmap.Config.ARGB_8888)
+        bmp.eraseColor(0xFFFFFF00.toInt())
+        val jpeg = java.io.ByteArrayOutputStream().also { bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, it) }.toByteArray()
+        val zip = java.io.ByteArrayOutputStream().also { out ->
+            io.github.shoalapps.squill.notes.writeZip(out, linkedMapOf(
+                "Trip Plan $id1.md" to "# Trip Plan\n\nSee [Packing](Trip%20Plan%20$id1/Packing%20$id2.md)\n\n![beach](Trip%20Plan%20$id1/beach.jpg)\n".toByteArray(),
+                "Trip Plan $id1/Packing $id2.md" to "# Packing\n\n- [ ] Towel\n".toByteArray(),
+                "Trip Plan $id1/beach.jpg" to jpeg,
+            ))
+        }.toByteArray()
+        val picture = { bytes: ByteArray ->
+            java.io.ByteArrayOutputStream().also { out ->
+                io.github.shoalapps.squill.paint.OraFile.save(io.github.shoalapps.squill.paint.OraFile.fromPicture(bytes).frozen(), out)
+            }.toByteArray()
+        }
+        val result = io.github.shoalapps.squill.notes.NotionImport.import(vault, zip.inputStream(), picture)
+        assertEquals(2, result.imported)
+        assertEquals(0, result.failed)
+        val top = vault.read("Trip Plan.md").body
+        assertTrue(top, top.contains("[[Trip Plan/Packing|Packing]]") && top.contains(".ora]]"))
+        assertTrue(vault.read("Trip Plan/Packing.md").body.contains("- [ ] Towel"))
+        assertEquals(2, io.github.shoalapps.squill.notes.NotionImport.import(vault, zip.inputStream(), picture).duplicates)
+    }
+
     @Test fun aPictureOpensAsAPainting() {
         val png = File(context.cacheDir, "Sunset.png")
         val bmp = android.graphics.Bitmap.createBitmap(40, 30, android.graphics.Bitmap.Config.ARGB_8888)
