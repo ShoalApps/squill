@@ -132,6 +132,20 @@ class Model(val root: File, private val hosting: Boolean = true, private val dev
     fun restore(path: String) = act<Any> { vault.restore(path) }
 
     /** Saved before this returns, so nothing typed is lost when the window closes. Skipped if the note has gone. */
+    /** Adds a link from one note to another, and says whether that changed anything. */
+    fun linkNotes(fromPath: String, target: String, onDone: (Boolean) -> Unit = {}) = act(onDone) {
+        val note = vault.read(fromPath)
+        val updated = Links.addLink(note.body, target, Links.Resolver(vault.stats().map { it.path }.filter { it.endsWith(".md") }))
+        if (updated != note.body) vault.save(fromPath, updated, note.pinned, note.colour)
+        updated != note.body
+    }
+
+    fun unlink(fromPath: String, target: String) = act<Unit> {
+        val note = vault.read(fromPath)
+        val updated = Links.removeLink(note.body, target)
+        if (updated != note.body) vault.save(fromPath, updated, note.pinned, note.colour)
+    }
+
     fun saveNow(path: String, body: String, pinned: Boolean, colour: String?) {
         synchronized(lock) { if (vault.exists(path)) vault.save(path, body, pinned, colour) }
     }

@@ -30,6 +30,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -272,7 +273,13 @@ fun paintingPicture(bytes: ByteArray): ImageBitmap? = runCatching {
 
 /** Every note as a dot and every link as a line. Drag the empty space to look around, scroll to zoom, click a dot to open it. */
 @Composable
-fun GraphPane(library: Library, onOpen: (GraphNode) -> Unit, modifier: Modifier = Modifier) {
+fun GraphPane(
+    library: Library, onOpen: (GraphNode) -> Unit, modifier: Modifier = Modifier,
+    onLink: (String, String, (Boolean) -> Unit) -> Unit = { _, _, _ -> },
+    onUnlink: (String, String) -> Unit = { _, _ -> },
+) {
+    val lastLayout = remember { arrayOfNulls<GraphLayout>(1) }
+    var linked by remember { mutableStateOf<Triple<String, String, String>?>(null) }
     var showUnwritten by rememberSaveable { mutableStateOf(true) }
     val graph: Graph = remember(library.notes, showUnwritten) { library.graph(showUnwritten) }
     Column(modifier) {
@@ -280,25 +287,41 @@ fun GraphPane(library: Library, onOpen: (GraphNode) -> Unit, modifier: Modifier 
             Text("Graph", style = MaterialTheme.typography.titleLarge)
             FilterChip(showUnwritten, { showUnwritten = !showUnwritten }, label = { Text("Unwritten notes") })
             Text("${graph.nodes.size} notes, ${graph.edges.size} links", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Drag one note onto another to link them", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            linked?.let { (path, target, words) ->
+                Text(words, style = MaterialTheme.typography.labelMedium)
+                TextButton(onClick = { onUnlink(path, target); linked = null }) { Text("Undo") }
+            }
         }
         if (graph.nodes.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No notes to show yet") }
-        else GraphCanvas(graph, onOpen, Modifier.fillMaxSize())
+        else GraphCanvas(graph, lastLayout, onOpen, onJoin = { from, to ->
+            // Dragging a note that isn't written yet links the other way round.
+            val (source, destination) = if (from.path != null) from to to else to to from
+            val path = source.path
+            if (path != null) {
+                val target = destination.path?.let { p -> destination.title.takeIf { library.resolver.resolve(it) == p } ?: p.removeSuffix(".md") } ?: destination.title
+                onLink(path, target) { changed -> linked = if (changed) Triple(path, target, "Linked ${source.title} to ${destination.title}") else null }
+            }
+        }, Modifier.fillMaxSize())
     }
 }
 
 @Composable
-private fun GraphCanvas(graph: Graph, onOpen: (GraphNode) -> Unit, modifier: Modifier) {
-    val layout = remember(graph) { GraphLayout(graph) }
-    var frame by remember(graph) { mutableIntStateOf(0) }
-    var zoom by remember(graph) { mutableFloatStateOf(1f) }
-    var panX by remember(graph) { mutableFloatStateOf(0f) }
-    var panY by remember(graph) { mutableFloatStateOf(0f) }
+private fun GraphCanvas(graph: Graph, last: Array<GraphLayout?>, onOpen: (GraphNode) -> Unit, onJoin: (GraphNode, GraphNode) -> Unit, modifier: Modifier) {
+    // Notes keep their places when the graph changes, so linking two doesn't scramble the rest.
+    val layout = remember(graph) { GraphLayout(graph, from = last[0]).also { last[0] = it } }
+    var frame by remember { mutableIntStateOf(0) }
+    var zoom by remember { mutableFloatStateOf(1f) }
+    var panX by remember { mutableFloatStateOf(0f) }
+    var panY by remember { mutableFloatStateOf(0f) }
     // Everything stays in view until you move or zoom it yourself.
-    var moved by remember(graph) { mutableStateOf(false) }
-    LaunchedEffect(layout) {
+    var moved by remember { mutableStateOf(false) }
+    var settle by remember { mutableIntStateOf(0) }
+    var dropOn by remember { mutableIntStateOf(-1) }
+    LaunchedEffect(layout, settle) {
         var moving = Float.MAX_VALUE
         var steps = 0
-        while (moving > .05f && steps < 2000) {
+        while ((moving > .05f && steps < 2000) || layout.held >= 0) {
             withFrameNanos { }
             repeat(if (graph.nodes.size > 300) 1 else 3) { moving = layout.step() }
             steps++
@@ -309,7 +332,41 @@ private fun GraphCanvas(graph: Graph, onOpen: (GraphNode) -> Unit, modifier: Mod
     val measurer = rememberTextMeasurer(cacheSize = 256)
     Canvas(
         modifier
-            .pointerInput(graph) { detectDragGestures { change, drag -> change.consume(); moved = true; panX += drag.x; panY += drag.y } }
+            .pointerInput(layout) {
+                fun worldX(x: Float) = (x - size.width / 2f - panX) / zoom
+                fun worldY(y: Float) = (y - size.height / 2f - panY) / zoom
+                fun release(join: Boolean) {
+                    val held = layout.held
+                    if (held < 0) return
+                    val target = dropOn
+                    layout.held = -1
+                    dropOn = -1
+                    if (join && target >= 0) onJoin(graph.nodes[held], graph.nodes[target])
+                    layout.reheat(); settle++
+                }
+                detectDragGestures(
+                    onDragStart = { at ->
+                        layout.nearest(worldX(at.x), worldY(at.y), 20f / zoom)?.let { layout.held = it; settle++ }
+                    },
+                    onDragEnd = { release(true) },
+                    onDragCancel = { release(false) },
+                ) { change, drag ->
+                    change.consume()
+                    if (layout.held >= 0) {
+                        val wx = worldX(change.position.x); val wy = worldY(change.position.y)
+                        layout.place(layout.held, wx, wy)
+                        var best = -1
+                        var bestD = (28f / zoom) * (28f / zoom)
+                        for (i in layout.x.indices) {
+                            if (i == layout.held) continue
+                            val d = (layout.x[i] - wx) * (layout.x[i] - wx) + (layout.y[i] - wy) * (layout.y[i] - wy)
+                            if (d <= bestD) { best = i; bestD = d }
+                        }
+                        dropOn = best
+                        frame++
+                    } else { moved = true; panX += drag.x; panY += drag.y }
+                }
+            }
             .pointerInput(graph) {
                 awaitPointerEventScope {
                     while (true) {
@@ -332,7 +389,7 @@ private fun GraphCanvas(graph: Graph, onOpen: (GraphNode) -> Unit, modifier: Mod
             },
     ) {
         frame.let { }
-        if (!moved) {
+        if (!moved && layout.held < 0) {
             val (z, x, y) = layout.fit(size.width, size.height, 70f)
             zoom = z; panX = x; panY = y
         }
@@ -344,6 +401,8 @@ private fun GraphCanvas(graph: Graph, onOpen: (GraphNode) -> Unit, modifier: Mod
             val p = at(i)
             if (p.x < -200f || p.y < -60f || p.x > size.width + 200f || p.y > size.height + 60f) return@forEachIndexed
             val radius = (5f + 1.6f * node.links.coerceAtMost(12)) * zoom.coerceIn(.6f, 1.6f)
+            if (i == dropOn) drawCircle(c.tertiary, radius + 8f, p, style = Stroke(3f))
+            if (i == layout.held) drawCircle(c.primary.copy(alpha = .25f), radius + 12f, p)
             if (node.path != null) drawCircle(c.primary, radius, p) else drawCircle(c.tertiary, radius, p, style = Stroke(2f))
             if (labels) {
                 val laid = measurer.measure(node.title, TextStyle(color = if (node.path != null) c.onSurface else c.onSurfaceVariant, fontSize = 12.sp), maxLines = 1, overflow = TextOverflow.Ellipsis, constraints = Constraints(maxWidth = 200))

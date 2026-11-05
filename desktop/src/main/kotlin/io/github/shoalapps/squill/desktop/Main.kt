@@ -131,7 +131,7 @@ fun App(model: Model, dark: Boolean = androidx.compose.foundation.isSystemInDark
                         val path = node.path
                         page = Page.NOTES
                         if (path != null) open = path else model.create("", node.title) { open = it.path }
-                    }, Modifier.weight(1f).fillMaxHeight())
+                    }, Modifier.weight(1f).fillMaxHeight(), onLink = { from, target, done -> model.linkNotes(from, target, done) }, onUnlink = { from, target -> model.unlink(from, target) })
                     Page.DEVICES -> DevicesPage(model, onChooseFolder)
                 }
             }
