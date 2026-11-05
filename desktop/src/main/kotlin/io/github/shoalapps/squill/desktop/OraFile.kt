@@ -10,9 +10,7 @@ import org.w3c.dom.Element
 
 /** A snapshot owned by the editor, never mutated while a save uses it. */
 class PaintingCopy(val painting: Painting, val extras: Map<String, ByteArray> = emptyMap(), val readOnlyReason: String? = null, val originalBytes: ByteArray? = null, val sources: Map<Long, String> = emptyMap(), val preview: ByteArray? = null) {
-    fun frozen() = PaintingCopy(Painting(painting.width, painting.height, painting.background).also { p ->
-        p.layers += painting.layers.map { it.copy() }; p.activeId = painting.activeId; p.nextId = painting.nextId
-    }, extras, readOnlyReason, originalBytes, sources, preview)
+    fun frozen() = PaintingCopy(painting.snapshot(true), extras, readOnlyReason, originalBytes, sources, preview)
 }
 
 /** Desktop PNG codec uses unpremultiplied channels to retain translucent layer pixels. */
@@ -26,33 +24,35 @@ object OraFile {
     fun load(bytes: ByteArray): PaintingCopy {
         val files = readZip(ByteArrayInputStream(bytes))
         val xml = files["stack.xml"] ?: error("That isn't an OpenRaster file")
+        val parsed = OraStack.parse(xml)
         val factory = DocumentBuilderFactory.newInstance().apply {
             setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
             setFeature("http://xml.org/sax/features/external-general-entities", false)
             setFeature("http://xml.org/sax/features/external-parameter-entities", false)
         }
         val root = factory.newDocumentBuilder().parse(ByteArrayInputStream(xml)).documentElement
-        val parsed = OraStack.parse(xml)
         require(parsed.width in 1..Painting.MAX_SIDE && parsed.height in 1..Painting.MAX_SIDE) { "That picture is too big to open" }
         // A small file can ask for huge layers, so see if they'd fit before unpacking any.
-        val needed = parsed.entries.size.toLong() * parsed.width * parsed.height * 4
+        fun groupDepth(items: List<OraStack.Item>): Int = items.filterIsInstance<OraStack.GroupEntry>().maxOfOrNull { 1 + groupDepth(it.children) } ?: 0
+        val needed = (parsed.entries.size.toLong() + groupDepth(parsed.items)) * parsed.width * parsed.height * 4
         require(needed <= Runtime.getRuntime().maxMemory() / 2) { "That painting has too many large layers to open here" }
         var reason: String? = null
         fun unsupported() { reason = "Read only: this painting has features this editor cannot keep. Open it in the app that made it." }
         fun inspect(e: Element) {
             val allowed = when(e.tagName) {
                 "image" -> setOf("version", "w", "h", "xres", "yres")
-                "stack" -> emptySet()
+                "stack" -> if (e.parentNode == root) emptySet() else setOf("name", "x", "y", "opacity", "visibility", "composite-op", "isolation", "squill-clipped")
                 "layer" -> setOf("name", "src", "x", "y", "opacity", "visibility", "composite-op", "alpha-preserve", "squill-clipped")
                 else -> { unsupported(); emptySet() }
             }
             for (i in 0 until e.attributes.length) if (e.attributes.item(i).nodeName !in allowed) unsupported()
             if (e.tagName == "image" && e !== root) unsupported()
-            if (e.tagName == "stack" && e.parentNode != root) unsupported()
-            if (e.tagName == "layer") {
-                if ((e.parentNode as? Element)?.tagName != "stack" || e.getAttribute("src").isEmpty()) unsupported()
+            if (e.tagName == "stack" && e.parentNode != root && (e.parentNode as? Element)?.tagName != "stack") unsupported()
+            if (e.tagName == "stack" && e.parentNode != root && e.getAttribute("isolation") !in listOf("", "isolate", "auto")) unsupported()
+            if (e.tagName == "layer" || (e.tagName == "stack" && e.parentNode != root)) {
+                if ((e.parentNode as? Element)?.tagName != "stack" || (e.tagName == "layer" && e.getAttribute("src").isEmpty())) unsupported()
                 if (e.getAttribute("composite-op").let { op -> op.isNotEmpty() && Blend.entries.none { it.ora == op } }) unsupported()
-                if (listOf("x", "y").any { e.getAttribute(it).let { v -> v.isNotEmpty() && v != "0" } }) unsupported()
+                if (e.tagName == "layer" && listOf("x", "y").any { e.getAttribute(it).let { v -> v.isNotEmpty() && v != "0" } }) unsupported()
                 if (e.getAttribute("visibility") !in listOf("", "visible", "hidden")) unsupported()
                 for (name in listOf("alpha-preserve", "squill-clipped")) if (e.getAttribute(name) !in listOf("", "true", "false")) unsupported()
                 if (e.getAttribute("opacity").let { it.isNotEmpty() && (it.toFloatOrNull()?.let { n -> n.isFinite() && n in 0f..1f } != true) }) unsupported()
@@ -67,32 +67,31 @@ object OraFile {
         for ((name, default) in listOf("version" to "0.0.5", "xres" to "72", "yres" to "72")) {
             if (root.getAttribute(name).let { it.isNotEmpty() && it != default }) unsupported()
         }
-        val p = Painting(parsed.width, parsed.height)
-        parsed.entries.withIndex().toList().asReversed().forEach { (index, e) ->
+        val decodedEntries = java.util.IdentityHashMap<IntArray, OraStack.Entry>()
+        val p = OraStack.toPainting(parsed) { e ->
             val data = files[e.src] ?: error("A layer's picture is missing")
-            val pixels = IntArray(p.width * p.height)
+            val pixels = IntArray(parsed.width * parsed.height)
             Data.makeFromBytes(data).use { encoded -> Codec.makeFromData(encoded).use { image ->
                 require(image.width in 1..Painting.MAX_SIDE && image.height in 1..Painting.MAX_SIDE) { "A layer is too big to open" }
-                if (image.width != p.width || image.height != p.height) unsupported()
+                if (image.width != parsed.width || image.height != parsed.height) unsupported()
                 val raw = Bitmap().use { bitmap ->
                     check(bitmap.allocPixels(info(image.width, image.height)))
                     image.readPixels(bitmap)
                     bitmap.readPixels(info(image.width, image.height), image.width * 4, 0, 0) ?: error("A layer couldn't be read")
                 }
-                val (ox, oy) = parsed.offsets[index]
+                val ox = e.x; val oy = e.y
                 for (y in 0 until image.height) for (x in 0 until image.width) {
                     val tx = x + ox; val ty = y + oy; val at = (y * image.width + x) * 4
-                    if (tx in 0 until p.width && ty in 0 until p.height) pixels[ty * p.width + tx] =
+                    if (tx in 0 until parsed.width && ty in 0 until parsed.height) pixels[ty * parsed.width + tx] =
                         ((raw[at + 3].toInt() and 255) shl 24) or ((raw[at].toInt() and 255) shl 16) or ((raw[at + 1].toInt() and 255) shl 8) or (raw[at + 2].toInt() and 255)
                 }
             } }
-            p.layers += Layer(p.nextId++, e.name, pixels, e.visible, e.opacity, e.blend, e.alphaLock, e.clipped)
+            decodedEntries[pixels] = e
+            pixels
         }
-        if (p.layers.isEmpty()) p.newLayer()
-        p.activeId = p.layers.last().id
         val used = parsed.entries.map { it.src }.toSet() + setOf("mimetype", "stack.xml", "mergedimage.png", "Thumbnails/thumbnail.png")
         return PaintingCopy(p, files.filterKeys { it !in used }, reason, bytes,
-            p.layers.zip(parsed.entries.asReversed()).associate { (layer, entry) -> layer.id to entry.src }, if (reason != null) files["mergedimage.png"] else null)
+            p.layers.mapNotNull { layer -> decodedEntries[layer.pixels]?.let { layer.id to it.src } }.toMap(), if (reason != null) files["mergedimage.png"] else null)
     }
     fun save(copy: PaintingCopy, output: OutputStream) {
         require(copy.readOnlyReason == null) { copy.readOnlyReason!! }
@@ -106,13 +105,15 @@ object OraFile {
             // Retain existing source paths, including references an extension might use.
             val usedNames = (copy.extras.keys + setOf("mimetype", "stack.xml", "mergedimage.png", "Thumbnails/thumbnail.png")).toMutableSet()
             val reserved = copy.sources.values.toSet()
-            val entries = p.layers.withIndex().toList().asReversed().map { (i, l) ->
+            val indices = p.layers.withIndex().associate { it.value.id to it.index }
+            val entries = p.toOra { l ->
+                val i = indices.getValue(l.id)
                 val original = copy.sources[l.id]?.takeIf { it !in usedNames }
                 var src = original ?: "data/squill-layer$i.png"
                 if (original == null) while (src in usedNames || src in reserved) src = "data/_" + src.substringAfter('/')
                 usedNames += src
                 put(src, png(l.pixels, p.width, p.height))
-                OraStack.Entry(l.name, src, l.opacity, l.visible, l.blend, l.alphaLock, l.clipped)
+                src
             }
             put("stack.xml", OraStack.write(p.width, p.height, entries).toByteArray())
             val flattened = p.flattened()

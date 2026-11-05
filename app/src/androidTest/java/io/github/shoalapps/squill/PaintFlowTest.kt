@@ -153,7 +153,7 @@ class PaintFlowTest {
         val p = Painting(64, 48)
         val a = Layer(1, "Bottom <one>", IntArray(64 * 48) { 0xFF112233.toInt() })
         val b = Layer(2, "Top", IntArray(64 * 48) { if (it % 2 == 0) 0x80FF0000.toInt() else 0 }, visible = false, opacity = .5f, blend = Blend.MULTIPLY, alphaLock = true, clipped = true)
-        p.layers += a; p.layers += b
+        p.root.children += a; p.root.children += b
         val bytes = ByteArrayOutputStream().also { OraFile.save(p.frozen(), it) }.toByteArray()
         val back = OraFile.load(bytes)
         assertEquals(64, back.width)
@@ -164,5 +164,26 @@ class PaintFlowTest {
         assertTrue(back.layers[1].alphaLock && back.layers[1].clipped && !back.layers[1].visible)
         assertEquals(0x80FF0000.toInt(), back.layers[1].pixels[0])
         File(rule.activity.getExternalFilesDir(null), "sample.ora").writeBytes(bytes)
+    }
+    @Test fun groupsMoveLayersAndSurviveReopening() {
+        open(advanced = true)
+        rule.onNodeWithText("Layers").performClick()
+        rule.waitUntilExactlyOneExists(hasText("Add group"), 8000)
+        rule.onNodeWithText("Add group").performClick()
+        rule.onNodeWithText("Layer 1", substring = false).performClick()
+        rule.onNodeWithText("Move up").performScrollTo().performClick()
+        rule.onNodeWithContentDescription("Show Group 1").performScrollTo().performClick()
+        waitFor {
+            val g = saved().root.children.singleOrNull() as? io.github.shoalapps.squill.paint.Group
+            g != null && !g.visible && g.children.singleOrNull() is Layer
+        }
+        rule.runOnUiThread { rule.activity.onBackPressedDispatcher.onBackPressed() }
+        rule.waitForIdle()
+        rule.onNodeWithText("Painting").performClick()
+        rule.waitUntilExactlyOneExists(hasContentDescription("Painting canvas", substring = true), 15000)
+        rule.onNodeWithText("Layers").performClick()
+        rule.onNodeWithText("Group 1", substring = false).assertExists()
+        rule.onNodeWithText("Layer 1", substring = false).assertExists()
+        assertTrue(!(saved().root.children.single() as io.github.shoalapps.squill.paint.Group).visible)
     }
 }

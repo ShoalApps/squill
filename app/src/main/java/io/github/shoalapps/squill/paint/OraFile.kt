@@ -13,9 +13,14 @@ import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
 /** A frozen copy of a painting, so saving can happen while painting carries on. */
-class PaintingCopy(val width: Int, val height: Int, val layers: List<Layer>)
+class PaintingCopy(val painting: Painting) {
+    val width get() = painting.width
+    val height get() = painting.height
+    val root get() = painting.root
+    val layers get() = painting.layers
+}
 
-fun Painting.frozen() = PaintingCopy(width, height, layers.map { it.copy() })
+fun Painting.frozen() = PaintingCopy(snapshot(true))
 fun Painting.frozenCopy() = frozen()
 
 /** OpenRaster: the open layered format that Krita, GIMP and others can open. */
@@ -31,7 +36,7 @@ object OraFile {
     }
 
     fun save(copy: PaintingCopy, output: OutputStream) {
-        val merged = Painting(copy.width, copy.height).also { it.layers += copy.layers }.flattened()
+        val merged = copy.painting.flattened()
         ZipOutputStream(output).use { zip ->
             // The format asks for this first and uncompressed, so a file can be told from its opening bytes.
             val mime = MIME.toByteArray()
@@ -42,9 +47,11 @@ object OraFile {
             zip.write(mime)
             zip.closeEntry()
             fun put(name: String, bytes: ByteArray) { zip.putNextEntry(ZipEntry(name)); zip.write(bytes); zip.closeEntry() }
-            val entries = copy.layers.withIndex().toList().asReversed().map { (i, l) ->
-                put("data/layer$i.png", png(l.pixels, copy.width, copy.height))
-                OraStack.Entry(l.name, "data/layer$i.png", l.opacity, l.visible, l.blend, l.alphaLock, l.clipped)
+            val indices = copy.layers.withIndex().associate { it.value.id to it.index }
+            val entries = copy.painting.toOra { l ->
+                val src = "data/layer${indices.getValue(l.id)}.png"
+                put(src, png(l.pixels, copy.width, copy.height))
+                src
             }
             put("stack.xml", OraStack.write(copy.width, copy.height, entries).toByteArray())
             put("mergedimage.png", png(merged, copy.width, copy.height))
@@ -71,27 +78,23 @@ object OraFile {
     fun load(bytes: ByteArray): Painting {
         val files = readZip(ByteArrayInputStream(bytes))
         val stack = files["stack.xml"] ?: throw OfficeException("That isn't an OpenRaster file")
-        val parsed = OraStack.parse(stack)
+        val parsed = try { OraStack.parse(stack) } catch (e: IllegalArgumentException) { throw OfficeException(e.message ?: "That painting could not be opened") }
         if (parsed.width !in 1..Painting.MAX_SIDE || parsed.height !in 1..Painting.MAX_SIDE) throw OfficeException("That picture is too big to open")
-        val p = Painting(parsed.width, parsed.height)
-        // The file lists the top layer first.
-        parsed.entries.withIndex().toList().asReversed().forEach { (i, e) ->
-            val pixels = IntArray(p.width * p.height)
+        val p = OraStack.toPainting(parsed) { e ->
+            val pixels = IntArray(parsed.width * parsed.height)
             files[e.src]?.let { decode(it) }?.let { bmp ->
-                val (ox, oy) = parsed.offsets[i]
+                val ox = e.x; val oy = e.y
                 val row = IntArray(bmp.width)
                 for (y in 0 until bmp.height) {
                     val ty = y + oy
-                    if (ty !in 0 until p.height) continue
+                    if (ty !in 0 until parsed.height) continue
                     bmp.getPixels(row, 0, bmp.width, 0, y, bmp.width, 1)
-                    for (x in 0 until bmp.width) { val tx = x + ox; if (tx in 0 until p.width) pixels[ty * p.width + tx] = row[x] }
+                    for (x in 0 until bmp.width) { val tx = x + ox; if (tx in 0 until parsed.width) pixels[ty * parsed.width + tx] = row[x] }
                 }
                 bmp.recycle()
             }
-            p.layers += Layer(p.nextId++, e.name, pixels, e.visible, e.opacity, e.blend, e.alphaLock, e.clipped)
+            pixels
         }
-        if (p.layers.isEmpty()) p.newLayer("Layer 1")
-        p.activeId = p.layers.last().id
         return p
     }
 
@@ -104,7 +107,7 @@ object OraFile {
         val pixels = IntArray(bmp.width * bmp.height)
         bmp.getPixels(pixels, 0, bmp.width, 0, 0, bmp.width, bmp.height)
         bmp.recycle()
-        p.layers += Layer(p.nextId++, "Background", pixels)
+        p.root.children += Layer(p.nextId++, "Background", pixels)
         p.activeId = p.layers.last().id
         return p
     }

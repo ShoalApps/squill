@@ -37,6 +37,7 @@ Notes, links and reminders, as ordinary files on your phone. A Material You note
 
 A layered painting studio with Simple, Advanced and Focus modes, inspired by Krita.
 
+- Layer groups with nested ordering, isolated or pass-through blending, opacity and clipping
 - Layers with 26 blend modes, opacity, transparency lock and clipping, merged, duplicated and reordered as you like
 - A stamp brush engine with 19 presets, from ink and pencil to watercolour, smudge and blur, and controls for flow, hardness, spacing, scatter, jitter, nib shape and stabilising, with pressure and tilt
 - Selections by box, oval, lasso and magic wand, which limit painting, fills and filters
@@ -44,7 +45,7 @@ A layered painting studio with Simple, Advanced and Focus modes, inspired by Kri
 - 17 filters, a colour picker with palette and recent colours, and a view you can pan, pinch and turn
 - Saves as OpenRaster (.ora), the open layered format Krita can open, and as PNG and JPEG. Opens pictures, and a Krita file's flattened image
 
-Not everything in Krita is here: there are no layer groups, filter masks, vector layers, animation timeline, perspective assistants, CMYK or high bit-depth colour, or plugins.
+Not everything in Krita is here: there are no filter masks, vector layers, animation timeline, perspective assistants, CMYK or high bit-depth colour, or plugins.
 
 ## Documents and slides
 
@@ -59,7 +60,7 @@ Not everything in Krita is here: there are no layer groups, filter masks, vector
 ## Sync and your computer
 
 - [Squill for Linux, Windows and Mac](https://github.com/ShoalApps/squill/releases/tag/desktop-latest) keeps your notes as ordinary files in a folder, so other Markdown apps can open it too
-- Write and read notes there with a live preview, backlinks, the graph, tags and search. Draw there with a mouse or tablet, with an eraser, selection, and undo. Edit slide text, speaker notes and order too. Paint there too, with brushes, an eraser, layers and blend modes, though the advanced painting tools are on the phone, and a painting with anything the computer can't keep, such as Krita layer groups, opens read-only. The layout of slides is edited on your phone
+- Write and read notes there with a live preview, backlinks, the graph, tags and search. Draw there with a mouse or tablet, with an eraser, selection, and undo. Edit slide text, speaker notes and order too. Paint there too, with brushes, an eraser, layers and blend modes, though the advanced painting tools are on the phone, and a painting with anything the computer can't keep, such as filter masks, opens read-only. The layout of slides is edited on your phone
 - Pair your phone with a one-time code. They then sync directly over your own network, encrypted, with no account and no cloud
 - If both change the same note before syncing, both versions are kept. Deletions go to the trash on the other device. Reminders sync too, and only the phone rings
 

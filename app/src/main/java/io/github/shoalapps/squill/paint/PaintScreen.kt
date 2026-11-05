@@ -246,7 +246,13 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
         if (recent.size > 12) recent.removeAt(recent.lastIndex)
     }
     fun setColour(c: Int) { colour = c; remember(c) }
+    fun paintingAllowed(): Boolean {
+        if (p.canPaint) return true
+        Toast.makeText(context, "That's a group. Pick a layer inside it to paint.", Toast.LENGTH_SHORT).show()
+        return false
+    }
     fun beginTransform() {
+        if (!paintingAllowed()) return
         if (lifted != null) return
         val a = p.active
         val mask = p.selection
@@ -309,24 +315,24 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
         }
     }
     val addPicture = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) work("Adding picture") {
+        if (uri != null && p.layers.size < Painting.MAX_LAYERS) work("Adding picture") {
             val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
             val picture = OraFile.fromPicture(bytes)
             p.change {
                 val out = IntArray(p.width * p.height)
                 for (y in 0 until minOf(picture.height, p.height)) System.arraycopy(picture.active.pixels, y * picture.width, out, y * p.width, minOf(picture.width, p.width))
                 val l = Layer(p.nextId++, "Picture", out)
-                p.layers.add(p.layers.indexOf(p.active) + 1, l)
-                p.activeId = l.id
+                p.insertLayer(l)
             }
         }
     }
 
     /** Lays a stroke along canvas points with the current brush, for lines and shape outlines. */
     fun strokeAlong(points: List<Offset>) {
+        if (!paintingAllowed()) return
         val a = p.active
         val before = a.pixels.copyOf()
-        val under = p.layers.getOrNull(p.layers.indexOf(a) - 1)?.takeIf { a.clipped }?.pixels
+        val under = p.clipAlphaFor(a)
         val s = StrokePainter(a.pixels, p.width, p.height, brush.copy(stabiliser = 0f), colour, p.selection, a.alphaLock, symmetry, under)
         points.forEach { s.add(it.x, it.y) }
         p.recordPixels(a, s.changed, before)
@@ -338,6 +344,7 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
     } else listOf(a, Offset(b.x, a.y), b, Offset(a.x, b.y), a)
 
     fun finishTool(t: Tool, a: Offset, b: Offset, trail: List<Offset>) {
+        if (t !in listOf(Tool.PICK, Tool.SELECT_RECT, Tool.SELECT_ELLIPSE, Tool.LASSO, Tool.WAND, Tool.VIEW) && !paintingAllowed()) return
         val w = p.width; val h = p.height
         val tap = hypot(b.x - a.x, b.y - a.y) < 6f / view.zoom
         when (t) {
@@ -437,16 +444,16 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
                     if (selectionTint != null && mode == PaintMode.ADVANCED) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp)) {
                         TextButton(onClick = { p.change { p.selection = null }; updateSelectionTint(); edited(); frame++ }) { Text("Deselect") }
                         TextButton(onClick = { p.invertSelection(); updateSelectionTint(); edited(); frame++ }) { Text("Invert") }
-                        TextButton(onClick = { work("Copying") { p.copySelectionToLayer() } }) { Text("Copy to layer") }
-                        TextButton(onClick = { work("Cutting") { p.copySelectionToLayer(cut = true) } }) { Text("Cut to layer") }
-                        TextButton(onClick = { p.clearActive(); edited(); refresh() }) { Text("Clear") }
+                        TextButton(onClick = { if (paintingAllowed()) work("Copying") { p.copySelectionToLayer() } }) { Text("Copy to layer") }
+                        TextButton(onClick = { if (paintingAllowed()) work("Cutting") { p.copySelectionToLayer(cut = true) } }) { Text("Cut to layer") }
+                        TextButton(onClick = { if (paintingAllowed()) { p.clearActive(); edited(); refresh() } }) { Text("Clear") }
                     }
                     if (mode == PaintMode.ADVANCED) {
                         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Tool.entries.forEach { t -> FilterChip(tool == t, { chooseTool(t) }, label = { Text(t.label) }) }
                         }
                         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            TextButton(onClick = { sheet = Sheet.LAYERS }) { Text("Layers") }
+                            TextButton(onClick = { endTransform(true); sheet = Sheet.LAYERS }) { Text("Layers") }
                             TextButton(onClick = { sheet = Sheet.BRUSH }) { Text("Brush") }
                             TextButton(onClick = { sheet = Sheet.FILTERS }) { Text("Filters") }
                             TextButton(onClick = { sheet = Sheet.IMAGE }) { Text("Image") }
@@ -485,7 +492,7 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
                             kotlin.math.sqrt(brush.size), { v -> brush = brush.copy(size = (v * v).coerceIn(1f, 600f)) }, valueRange = 1f..24.5f,
                             modifier = Modifier.weight(1f).semantics { contentDescription = "Brush size" },
                         )
-                        if (mode == PaintMode.SIMPLE) TextButton(onClick = { sheet = Sheet.LAYERS }) { Text("Layers") }
+                        if (mode == PaintMode.SIMPLE) TextButton(onClick = { endTransform(true); sheet = Sheet.LAYERS }) { Text("Layers") }
                     }
                 }
             }
@@ -559,12 +566,13 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
                                 }
                             }
 
+                            if (route == Route.STROKE && !paintingAllowed()) return@awaitEachGesture
                             when (route) {
                                 Route.VIEW -> panLoop()
                                 Route.STROKE -> {
                                     val a = p.active
                                     val use = if (eraserEnd) BrushPresets.all.first { it.name == "Eraser" }.copy(size = brush.size) else brush
-                                    val under = p.layers.getOrNull(p.layers.indexOf(a) - 1)?.takeIf { a.clipped }?.pixels
+                                    val under = p.clipAlphaFor(a)
                                     val painter = StrokePainter(a.pixels, p.width, p.height, use, colour, p.selection, a.alphaLock, symmetry, under, seed = version + 11)
                                     val start = view.toCanvas(down.position.x, down.position.y)
                                     refresh(painter.add(start.x, start.y, pressureOf(down.pressure, down.type)))
@@ -614,6 +622,7 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
                                     val activeTool = tool
                                     val a = view.toCanvas(down.position.x, down.position.y)
                                     if (activeTool == Tool.TRANSFORM) {
+                                        if (!paintingAllowed()) return@awaitEachGesture
                                         var lastScreen = a
                                         while (true) {
                                             val e = awaitPointerEvent()
@@ -707,7 +716,7 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
                     Sheet.LAYERS -> LayerSheet(p, version + frame, advanced = mode != PaintMode.SIMPLE, onChanged = { edited(); refresh() })
                     Sheet.FILTERS -> FilterSheet { f, amount ->
                         sheet = null
-                        work(f.label) { p.filterActive(f, amount) }
+                        if (paintingAllowed()) work(f.label) { p.filterActive(f, amount) }
                     }
                     Sheet.IMAGE -> ImageSheet(
                         p,
@@ -742,9 +751,10 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
                 }
             },
             confirmButton = {
-                TextButton(enabled = words.isNotBlank(), onClick = {
+                TextButton(enabled = words.isNotBlank() && p.layers.size < Painting.MAX_LAYERS, onClick = {
                     val text = words; val fontSize = size; val ink = colour
                     typingAt = null
+                    if (!paintingAllowed()) return@TextButton
                     p.change {
                         val bmp = Bitmap.createBitmap(p.width, p.height, Bitmap.Config.ARGB_8888)
                         val c = android.graphics.Canvas(bmp)
@@ -756,8 +766,7 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
                         // Android hands these back premultiplied, and layers hold plain colour.
                         for (i in out.indices) { val v = out[i]; val al = alphaOf(v); if (al in 1..254) out[i] = (ink and 0xFFFFFF) or (al shl 24) }
                         val l = Layer(p.nextId++, text.take(20), out)
-                        p.layers.add(p.layers.indexOf(p.active) + 1, l)
-                        p.activeId = l.id
+                        p.insertLayer(l)
                     }
                     edited(); refresh()
                 }) { Text("Add") }
@@ -920,53 +929,73 @@ private fun LayerSheet(p: Painting, tick: Int, advanced: Boolean, onChanged: () 
     var local by remember { mutableIntStateOf(0) }
     fun done() { local++; onChanged() }
     val renderTick = tick + local
-    var renaming by remember { mutableStateOf<Layer?>(null) }
+    var renaming by remember { mutableStateOf<Node?>(null) }
+    val collapsed = remember { androidx.compose.runtime.mutableStateMapOf<Long, Boolean>() }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Layers", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-        if (renderTick >= 0) TextButton(enabled = p.layers.size < Painting.MAX_LAYERS, onClick = { p.change { p.newLayer() }; done() }) { Text("Add layer") }
+        if (renderTick >= 0) TextButton(enabled = p.layers.size < Painting.MAX_LAYERS, onClick = { p.newLayer(); done() }) { Text("Add layer") }
+        if (advanced) TextButton(enabled = p.nodes.count { it is Group } < Painting.MAX_LAYERS, onClick = { p.newGroup(); done() }) { Text("Add group") }
     }
-    p.layers.asReversed().forEach { l ->
-        val isActive = l.id == p.activeId
-        Row(
-            Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small).background(if (isActive) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
-                .clickable { p.activeId = l.id; done() }.padding(horizontal = 8.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Switch(l.visible, { p.change { l.visible = it }; done() }, modifier = Modifier.semantics { contentDescription = "Show ${l.name}" })
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(l.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (advanced) Text(
-                    "${l.blend.label}, ${(l.opacity * 100).toInt()}%" + (if (l.alphaLock) ", locked" else "") + (if (l.clipped) ", clipped" else ""),
-                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+    // The tree is plain mutable data, so the tick is what makes these rows redraw.
+    @Composable fun rows(group: Group, depth: Int, tick: Int) {
+        group.children.asReversed().forEach { n ->
+            val isActive = n.id == p.activeId
+            Row(
+                Modifier.fillMaxWidth().padding(start = (depth * 16).dp).clip(MaterialTheme.shapes.small).background(if (isActive) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
+                    .clickable { p.activeId = n.id; done() }.padding(horizontal = 8.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (n is Group) {
+                    TextButton(onClick = { collapsed[n.id] = collapsed[n.id] != true }, modifier = Modifier.semantics { contentDescription = "${if (collapsed[n.id] == true) "Expand" else "Collapse"} ${n.name}" }) { Text(if (collapsed[n.id] == true) "+" else "−") }
+                    Icon(androidx.compose.ui.res.painterResource(io.github.shoalapps.squill.R.drawable.ic_folder), contentDescription = null, modifier = Modifier.size(20.dp))
+                }
+                Switch(n.visible, { p.change { n.visible = it }; done() }, modifier = Modifier.semantics { contentDescription = "Show ${n.name}" })
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(n.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (n is Group) Text(if (n.children.size == 1) "1 item" else "${n.children.size} items", style = MaterialTheme.typography.labelSmall)
+                    if (advanced) Text(
+                        "${n.blend.label}, ${(n.opacity * 100).toInt()}%" + (if (n is Layer && n.alphaLock) ", locked" else "") + (if (n is Group && n.passThrough) ", pass through" else "") + (if (n.clipped) ", clipped" else ""),
+                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (isActive) TextButton(onClick = { renaming = n }) { Text("Rename") }
             }
-            if (isActive) TextButton(onClick = { renaming = l }) { Text("Rename") }
+            if (n is Group && collapsed[n.id] != true) rows(n, depth + 1, tick)
         }
     }
-    val a = p.active
+    rows(p.root, 0, renderTick)
+    val a = p.activeNode
+    // A drag would otherwise record a whole-painting undo step per tick and push out older history.
     Labelled("Opacity", a.opacity, 0f..1f, pct(a.opacity)) { a.opacity = it; done() }
     if (advanced) {
         Text("Blend mode", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 8.dp))
-        BlendPicker(a.blend) { p.change { a.blend = it }; done() }
+        BlendPicker(a.blend) { blend -> p.change { a.blend = blend; if (blend != Blend.NORMAL && a is Group) a.passThrough = false }; done() }
         Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(a.alphaLock, { p.change { a.alphaLock = !a.alphaLock }; done() }, label = { Text("Lock transparency") })
+            if (a is Layer) FilterChip(a.alphaLock, { p.change { a.alphaLock = !a.alphaLock }; done() }, label = { Text("Lock transparency") })
+            if (a is Group) FilterChip(a.passThrough, { p.change { a.passThrough = !a.passThrough; if (a.passThrough) a.blend = Blend.NORMAL }; done() }, enabled = !a.clipped, label = { Text("Pass through") })
             FilterChip(a.clipped, { p.change { a.clipped = !a.clipped }; done() }, label = { Text("Clip to layer below") })
         }
     }
     FlowRow(Modifier.padding(top = 8.dp)) {
         TextButton(onClick = { p.moveActive(1); done() }) { Text("Move up") }
         TextButton(onClick = { p.moveActive(-1); done() }) { Text("Move down") }
-        TextButton(enabled = p.layers.size < Painting.MAX_LAYERS, onClick = { p.duplicateActive(); done() }) { Text("Duplicate") }
-        TextButton(onClick = { p.mergeDown(); done() }) { Text("Merge down") }
-        TextButton(onClick = { p.clearActive(); done() }) { Text("Clear") }
-        TextButton(enabled = p.layers.size > 1, onClick = { p.deleteActive(); done() }) { Text("Delete") }
+        TextButton(enabled = p.canDuplicateActive, onClick = { p.duplicateActive(); done() }) { Text("Duplicate") }
+        if (a is Group) {
+            TextButton(onClick = { p.ungroup(); done() }) { Text("Ungroup") }
+            TextButton(onClick = { p.mergeGroup(); done() }) { Text("Merge group") }
+        } else {
+            if (advanced) TextButton(onClick = { p.groupActive(); done() }) { Text("Group this") }
+            TextButton(enabled = p.canMergeDown, onClick = { p.mergeDown(); done() }) { Text("Merge down") }
+            TextButton(onClick = { p.clearActive(); done() }) { Text("Clear") }
+        }
+        TextButton(enabled = p.canDeleteActive, onClick = { p.deleteActive(); done() }) { Text("Delete") }
     }
     renaming?.let { l ->
         var name by remember(l.id) { mutableStateOf(l.name) }
         AlertDialog(
             onDismissRequest = { renaming = null },
-            title = { Text("Layer name") },
+            title = { Text("Name") },
             text = { OutlinedTextField(name, { name = it }, singleLine = true) },
             confirmButton = { TextButton(enabled = name.isNotBlank(), onClick = { p.change { l.name = name.trim() }; renaming = null; done() }) { Text("OK") } },
         )

@@ -201,4 +201,23 @@ class PaintingEditorTest {
         assertArrayEquals(painted.painting.active.pixels, undoErase.painting.active.pixels)
     }
 
+    @Test fun groupsAcceptMovedLayersAndBlockPainting() = runDesktopComposeUiTest(1200, 900) {
+        val saved = AtomicReference<PaintingCopy?>()
+        setContent { MaterialTheme { PaintingEditor(PaintingCopy(Painting.blank(64, 64)), saved::set) } }
+        fun settle() { Thread.sleep(200); mainClock.advanceTimeByFrame(); waitForIdle() }
+        onNodeWithText("Add group").performClick(); settle()
+        onNodeWithContentDescription("Select group Group 1").assertExists()
+        onNodeWithContentDescription("Select layer Layer 1").performClick(); settle()
+        onNodeWithText("Up").performScrollTo().performClick(); settle()
+        onNodeWithContentDescription("Select group Group 1").performScrollTo().performClick(); settle()
+        onNodeWithText("That's a group. Pick a layer inside it to paint.").assertExists()
+        onNodeWithContentDescription("Painting canvas").performMouseInput { moveTo(Offset(450f, 350f)); press(); release() }
+        settle(); mainClock.advanceTimeBy(SAVE_AFTER_MS + 100); waitForIdle()
+        waitUntil(timeoutMillis = 5000) { saved.get() != null }
+        val p = saved.get()!!.painting
+        assertTrue(p.activeNode is io.github.shoalapps.squill.paint.Group)
+        assertEquals(1, (p.activeNode as io.github.shoalapps.squill.paint.Group).children.size)
+        assertTrue(p.layers.single().pixels.all { it == 0 })
+    }
+
 }

@@ -393,7 +393,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
 
     fun createPainting(folder: String, name: String, width: Int = 2048, height: Int = 1536, onDone: (String) -> Unit) = act(onDone) {
         val blank = io.github.shoalapps.squill.paint.Painting.blank(width, height)
-        vault.createFile(folder, name, "ora") { out -> io.github.shoalapps.squill.paint.OraFile.save(blank.run { io.github.shoalapps.squill.paint.PaintingCopy(width, height, layers) }, out) }
+        vault.createFile(folder, name, "ora") { out -> io.github.shoalapps.squill.paint.OraFile.save(blank.run { io.github.shoalapps.squill.paint.PaintingCopy(snapshot(true)) }, out) }
     }
 
     /** Paintings save in the background, in order, from a copy taken when they were asked for. */
@@ -452,7 +452,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     typed.endsWith(".kra", ignoreCase = true) || listOf(".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".heic", ".heif", ".avif").any { typed.endsWith(it, ignoreCase = true) } -> {
                         val painting = io.github.shoalapps.squill.paint.OraFile.fromPicture(open().use { it.readBytes() })
-                        vault.createFile(folder, stem, "ora") { io.github.shoalapps.squill.paint.OraFile.save(painting.run { io.github.shoalapps.squill.paint.PaintingCopy(width, height, layers) }, it) }
+                        vault.createFile(folder, stem, "ora") { io.github.shoalapps.squill.paint.OraFile.save(painting.run { io.github.shoalapps.squill.paint.PaintingCopy(snapshot(true)) }, it) }
                     }
                     typed.endsWith(".md", ignoreCase = true) || typed.endsWith(".txt", ignoreCase = true) -> vault.create(folder, stem, open().use { it.readBytes().toString(Charsets.UTF_8) }).path
                     typed.endsWith(".pptx", ignoreCase = true) -> vault.createDeck(folder, stem, open().use { Pptx.import(it) })

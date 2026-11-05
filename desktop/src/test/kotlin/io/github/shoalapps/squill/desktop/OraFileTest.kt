@@ -78,7 +78,7 @@ class OraFileTest {
             { it.replace("<stack>", "<stack custom=\"keep\">") },
             { it.replace("svg:src-over", "vendor:unknown") },
             { it.replace("x=\"0\"", "x=\"3\"") },
-            { it.replace("<stack>", "<stack><stack>").replace("</stack>", "</stack></stack>") }
+            { it.replace("<stack>", "<stack><stack custom=\"keep\">").replace("</stack>", "</stack></stack>") }
         )) {
             val modified = files + ("stack.xml" to change(files.getValue("stack.xml").toString(Charsets.UTF_8)).toByteArray())
             val copy = OraFile.load(ByteArrayOutputStream().also { writeZip(it, modified) }.toByteArray())
@@ -104,7 +104,7 @@ class OraFileTest {
         p.undo(); assertArrayEquals(painted, p.active.pixels)
         p.undo(); assertTrue(p.active.pixels.all { it == 0 })
         p.redo(); assertArrayEquals(painted, p.active.pixels)
-        p.change { p.newLayer("Top") }; p.moveActive(-1); p.undo(); assertEquals("Top", p.layers.last().name)
+        p.newLayer("Top"); p.moveActive(-1); p.undo(); assertEquals("Top", p.layers.last().name)
     }
     @Test fun paintingSavesThroughAnEncryptedVault() {
         val model = Model(dir.newFolder(), hosting = false); model.start()
@@ -143,5 +143,50 @@ class OraFileTest {
         java.util.zip.ZipOutputStream(out).use { z -> z.putNextEntry(java.util.zip.ZipEntry("stack.xml")); z.write(xml.toByteArray()); z.closeEntry() }
         val failure = runCatching { OraFile.load(out.toByteArray()) }.exceptionOrNull()
         org.junit.Assert.assertTrue(failure?.message, failure?.message?.contains("too") == true)
+    }
+    @Test fun nestedGroupsRoundTripWithExactPixelsAndSourceAssociations() {
+        val p = Painting.blank(7, 5)
+        p.active.name = "Bottom"; p.active.pixels.fill(0xFF123456.toInt())
+        p.newGroup("Outer <&\""); val outer = p.activeNode as Group
+        p.newLayer("First").pixels.fill(0x802468AC.toInt())
+        p.newGroup("Inner"); val inner = p.activeNode as Group
+        p.newLayer("Second").pixels.fill(0xC013579B.toInt())
+        p.activeId = inner.id; p.newGroup("Empty")
+        outer.opacity = .6f; outer.blend = Blend.SCREEN; outer.clipped = true
+        inner.passThrough = true; inner.visible = false
+        val initial = PaintingCopy(p)
+        val loaded = OraFile.load(save(initial))
+        assertNull(loaded.readOnlyReason); same(p, loaded.painting)
+        fun structure(p: Painting) = OraStack.write(p.width, p.height, p.toOra { it.name })
+        assertEquals(structure(p), structure(loaded.painting))
+        val files = readZip(ByteArrayInputStream(save(loaded)))
+        loaded.painting.layers.forEach { layer ->
+            val image = ImageIO.read(ByteArrayInputStream(files.getValue(loaded.sources.getValue(layer.id))))
+            assertArrayEquals(layer.pixels, image.getRGB(0, 0, 7, 5, null, 0, 7))
+        }
+        val again = OraFile.load(save(loaded)); same(p, again.painting)
+        assertEquals(structure(p), structure(again.painting)); assertEquals(initial.signature(), again.signature())
+        assertArrayEquals(p.flattened(), again.painting.flattened())
+    }
+
+    @Test fun nestedStackUnknownAttributesAreReadOnlyButOffsetsAndAutoMultiplyAreSupported() {
+        val p = Painting.blank(1, 1); p.groupActive()
+        val files = readZip(ByteArrayInputStream(save(PaintingCopy(p))))
+        val xml = files.getValue("stack.xml").toString(Charsets.UTF_8)
+        fun load(stack: String) = OraFile.load(ByteArrayOutputStream().also { writeZip(it, files + ("stack.xml" to stack.toByteArray())) }.toByteArray())
+        assertNotNull(load(xml.replace("<stack name=", "<stack custom=\"keep\" name=")).readOnlyReason)
+        val supported = load(xml.replace("<stack name=", "<stack x=\"12\" y=\"-3\" name=").replace("isolation=\"isolate\"", "isolation=\"auto\"").replace("composite-op=\"svg:src-over\" isolation", "composite-op=\"svg:multiply\" isolation"))
+        assertNull(supported.readOnlyReason)
+        assertFalse((supported.painting.root.children.single() as Group).passThrough)
+    }
+
+    @Test fun signaturesIncludeStructureAndGroupFieldsButIgnoreIds() {
+        val p = Painting.blank(1, 1); p.newLayer("top")
+        val flat = PaintingCopy(p).signature()
+        p.groupActive(); val grouped = PaintingCopy(p).signature(); assertNotEquals(flat, grouped)
+        val g = p.activeNode as Group
+        val snapshot = p.snapshot(true); snapshot.nodes.forEach { it.id += 100 }; assertEquals(grouped, PaintingCopy(snapshot).signature())
+        g.opacity = .5f; assertNotEquals(grouped, PaintingCopy(p).signature())
+        g.opacity = 1f; g.passThrough = true; assertNotEquals(grouped, PaintingCopy(p).signature())
     }
 }

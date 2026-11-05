@@ -36,10 +36,7 @@ internal class PaintingSession(initial: PaintingCopy, private val publish: (Pain
     private var rendered = IntArray(0)
     init { submit { document = initial.frozen(); rendered = IntArray(p.width * p.height); refresh() } }
     // Pixel writes always detach first. Published arrays can therefore be shared with saves.
-    private fun snapshot() = PaintingCopy(Painting(p.width, p.height, p.background).also { out ->
-        out.layers += p.layers.map { l -> Layer(l.id, l.name, l.pixels, l.visible, l.opacity, l.blend, l.alphaLock, l.clipped) }
-        out.activeId = p.activeId; out.nextId = p.nextId
-    }, document.extras, document.readOnlyReason, document.originalBytes, document.sources, document.preview)
+    private fun snapshot() = PaintingCopy(p.snapshot(false), document.extras, document.readOnlyReason, document.originalBytes, document.sources, document.preview)
     fun submit(block: PaintingSession.() -> Unit) {
         if (closed.get()) return
         queued.incrementAndGet()
@@ -59,7 +56,7 @@ internal class PaintingSession(initial: PaintingCopy, private val publish: (Pain
         SwingUtilities.invokeLater { publish(copy, image, undo, redo, version) }
     }
     fun replace(copy: PaintingCopy) { document = copy.frozen(); rendered = IntArray(p.width * p.height); refresh() }
-    fun select(id: Long) { if (stroke == null) { p.activeId = id; refresh() } }
+    fun select(id: Long) { if (stroke == null && p.find(id) != null) { p.activeId = id; refresh() } }
     fun edit(block: Painting.() -> Unit) { if (stroke != null || document.readOnlyReason != null) return; p.block(); revision++; refresh() }
     fun history(redo: Boolean) = edit {
         // Whole history steps retain arrays; detach before a pixel undo can write to them.
@@ -67,10 +64,10 @@ internal class PaintingSession(initial: PaintingCopy, private val publish: (Pain
         if (redo) redo() else undo()
     }
     fun begin(x: Float, y: Float, pressure: Float, brush: BrushSettings, colour: Int) {
-        if (document.readOnlyReason != null) return
+        if (document.readOnlyReason != null || !p.canPaint) return
         val a = p.active
         a.pixels = a.pixels.copyOf()
-        val base = if (a.clipped) p.layers.takeWhile { it !== a }.lastOrNull { !it.clipped }?.pixels else null
+        val base = p.clipAlphaFor(a)
         stroke = StrokePainter(a.pixels, p.width, p.height, brush, colour, p.selection, a.alphaLock, clipAlpha = base)
         point(x, y, pressure)
     }
@@ -85,7 +82,7 @@ internal class PaintingSession(initial: PaintingCopy, private val publish: (Pain
         it.finish(x, y, pressure); p.recordPixels(p.active, it.changed, it.original); stroke = null
         revision++
         pending = Rect.EMPTY; refresh(it.changed)
-    } }
+    } ?: run { revision++; refresh() } } // The press counted as an edit, so a refused stroke must still settle it or autosave waits forever.
     fun leave(save: (PaintingCopy) -> Unit, dirty: Boolean, enqueue: ((() -> PaintingCopy?) -> Unit)? = null) {
         if (!closed.compareAndSet(false, true)) return
         val finished = java.util.concurrent.CompletableFuture<PaintingCopy?>()
@@ -113,8 +110,12 @@ internal fun PaintingCopy.signature(): String {
     text(readOnlyReason ?: "")
     if (readOnlyReason != null) originalBytes?.let(::bytes)
     text("${painting.width},${painting.height},${painting.background}")
-    painting.layers.forEach { l ->
-        text(l.name); text("${l.visible},${l.opacity},${l.blend},${l.alphaLock},${l.clipped}")
+    fun node(n: Node) {
+        text(if (n is Group) "group" else "layer")
+        text(n.name); text("${n.visible},${n.opacity},${n.blend},${n.clipped}")
+        if (n is Group) { text("${n.passThrough},${n.children.size}"); n.children.forEach(::node); text("end"); return }
+        val l = n as Layer
+        text("${l.alphaLock}")
         val buffer = java.nio.ByteBuffer.allocate(16384)
         l.pixels.forEach { pixel ->
             if (buffer.remaining() < 4) { digest.update(buffer.array(), 0, buffer.position()); buffer.clear() }
@@ -122,6 +123,7 @@ internal fun PaintingCopy.signature(): String {
         }
         digest.update(buffer.array(), 0, buffer.position())
     }
+    painting.root.children.forEach(::node)
     extras.toSortedMap().forEach { (name, value) -> text(name); bytes(value) }
     return digest.digest().joinToString("") { "%02x".format(it) }
 }
@@ -185,7 +187,7 @@ fun PaintingEditor(document: PaintingCopy, onSave: (PaintingCopy) -> Unit, modif
     var fitted by remember { mutableStateOf(false) }
     val focus = remember { FocusRequester() }
     val readOnly = copy.readOnlyReason != null
-    val active = copy.painting.active
+    val active = copy.painting.activeNode
     fun fit() {
         if (viewport.width <= 0 || viewport.height <= 0) return
         zoom = minOf(viewport.width.toFloat() / copy.painting.width, viewport.height.toFloat() / copy.painting.height) * .95f
@@ -229,7 +231,7 @@ fun PaintingEditor(document: PaintingCopy, onSave: (PaintingCopy) -> Unit, modif
                             if (event.type != PointerEventType.Press) continue
                             focus.requestFocus()
                             val move = hand || event.keyboardModifiers.isAltPressed
-                            val paint = !move && !readOnly
+                            val paint = !move && !readOnly && copy.painting.canPaint
                             fun pressure(c: PointerInputChange) = if (c.type == PointerType.Stylus || c.type == PointerType.Eraser) c.pressure.coerceIn(0f, 1f) else 1f
                             fun world(c: PointerInputChange) = (c.position - pan) / zoom
                             var last = down
@@ -259,31 +261,58 @@ fun PaintingEditor(document: PaintingCopy, onSave: (PaintingCopy) -> Unit, modif
             Column(Modifier.width(230.dp).fillMaxHeight().verticalScroll(rememberScrollState()).padding(8.dp)) {
                 Text("Layers")
                 Row {
-                    TextButton({ edit { change { newLayer() } } }, enabled = !readOnly && !dragging && copy.painting.layers.size < Painting.MAX_LAYERS) { Text("Add") }
-                    TextButton({ edit { deleteActive() } }, enabled = !readOnly && !dragging && copy.painting.layers.size > 1) { Text("Delete") }
+                    TextButton({ edit { newLayer() } }, enabled = !readOnly && !dragging && copy.painting.layers.size < Painting.MAX_LAYERS) { Text("Add") }
+                    TextButton({ edit { deleteActive() } }, enabled = !readOnly && !dragging && copy.painting.canDeleteActive) { Text("Delete") }
                 }
-                copy.painting.layers.asReversed().forEach { layer ->
-                    FilterChip(layer.id == active.id, { session.submit { select(layer.id) } }, { Text(if (layer.visible) layer.name else "${layer.name} (hidden)") }, modifier = Modifier.semantics { contentDescription = "Select layer ${layer.name}" })
+                val collapsed = remember { mutableStateMapOf<Long, Boolean>() }
+                @Composable fun rows(group: Group, depth: Int) {
+                    group.children.asReversed().forEach { node ->
+                        Row(Modifier.padding(start = (depth * 16).dp)) {
+                            if (node is Group) TextButton({ collapsed[node.id] = collapsed[node.id] != true }, modifier = Modifier.semantics { contentDescription = "${if (collapsed[node.id] == true) "Expand" else "Collapse"} ${node.name}" }) { Text(if (collapsed[node.id] == true) "+" else "−") }
+                            FilterChip(node.id == active.id, { session.submit { select(node.id) } }, { Text(if (node.visible) node.name else "${node.name} (hidden)") }, modifier = Modifier.semantics { contentDescription = "Select ${if (node is Group) "group" else "layer"} ${node.name}" })
+                        }
+                        if (node is Group && collapsed[node.id] != true) rows(node, depth + 1)
+                    }
+                }
+                rows(copy.painting.root, 0)
+                Row {
+                    TextButton({ edit { newGroup() } }, enabled = !readOnly && !dragging && copy.painting.nodes.count { it is Group } < Painting.MAX_LAYERS) { Text("Add group") }
+                    if (active is Layer) TextButton({ edit { groupActive() } }, enabled = !readOnly && !dragging) { Text("Group this") }
+                }
+                if (active is Group) {
+                    Text("That's a group. Pick a layer inside it to paint.")
+                    Row {
+                        TextButton({ edit { ungroup() } }, enabled = !readOnly && !dragging) { Text("Ungroup") }
+                        TextButton({ edit { mergeGroup() } }, enabled = !readOnly && !dragging) { Text("Merge group") }
+                    }
+                    Row {
+                        Checkbox(active.passThrough, { value -> edit { change { (activeNode as? Group)?.let { it.passThrough = value; if (value) it.blend = Blend.NORMAL } } } }, enabled = !readOnly && !dragging && !active.clipped)
+                        Text("Pass through")
+                    }
+                }
+                Row {
+                    TextButton({ edit { duplicateActive() } }, enabled = !readOnly && !dragging && copy.painting.canDuplicateActive) { Text("Duplicate") }
+                    TextButton({ edit { mergeDown() } }, enabled = !readOnly && !dragging && copy.painting.canMergeDown) { Text("Merge down") }
                 }
                 key(active.id, active.name) {
                     var name by remember { mutableStateOf(active.name) }
                     OutlinedTextField(name, { name = it }, label = { Text("Layer name") }, enabled = !readOnly && !dragging)
-                    TextButton({ val value = name; edit { change { this.active.name = value } } }, enabled = !readOnly && !dragging && name != active.name) { Text("Rename") }
+                    TextButton({ val value = name; edit { change { this.activeNode.name = value } } }, enabled = !readOnly && !dragging && name != active.name) { Text("Rename") }
                 }
                 Row {
                     TextButton({ edit { moveActive(1) } }, enabled = !readOnly && !dragging) { Text("Up") }
                     TextButton({ edit { moveActive(-1) } }, enabled = !readOnly && !dragging) { Text("Down") }
                 }
-                Row { Checkbox(active.visible, { value -> edit { change { this.active.visible = value } } }, modifier = Modifier.semantics { contentDescription = "Layer visible" }, enabled = !readOnly && !dragging); Text("Visible") }
+                Row { Checkbox(active.visible, { value -> edit { change { this.activeNode.visible = value } } }, modifier = Modifier.semantics { contentDescription = "Layer visible" }, enabled = !readOnly && !dragging); Text("Visible") }
                 var layerOpacity by remember(active.id, active.opacity) { mutableFloatStateOf(active.opacity) }
                 Text("Layer opacity ${(layerOpacity * 100).toInt()}%")
                 Slider(layerOpacity, { layerOpacity = it }, onValueChangeFinished = {
-                    if (layerOpacity != active.opacity) { val value = layerOpacity; edit { change { this.active.opacity = value } } }
+                    if (layerOpacity != active.opacity) { val value = layerOpacity; edit { change { this.activeNode.opacity = value } } }
                 }, modifier = Modifier.semantics { contentDescription = "Layer opacity" }, enabled = !readOnly && !dragging)
                 Box {
                     TextButton({ blendMenu = true }, enabled = !readOnly && !dragging) { Text("Blend: ${active.blend.label}") }
                     DropdownMenu(blendMenu, { blendMenu = false }) { Blend.entries.forEach { blend ->
-                        DropdownMenuItem({ Text(blend.label) }, { edit { change { this.active.blend = blend } }; blendMenu = false })
+                        DropdownMenuItem({ Text(blend.label) }, { edit { change { this.activeNode.blend = blend; if (blend != Blend.NORMAL) (activeNode as? Group)?.passThrough = false } }; blendMenu = false })
                     } }
                 }
             }
