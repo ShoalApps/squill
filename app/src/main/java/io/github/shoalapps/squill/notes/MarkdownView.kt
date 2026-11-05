@@ -1,5 +1,7 @@
 package io.github.shoalapps.squill.notes
 
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -42,6 +45,7 @@ import androidx.compose.ui.unit.dp
 
 class MarkdownActions(
     val sketch: (String) -> Sketch? = { null },
+    val painting: (String) -> ByteArray? = { null },
     val onSketch: (String) -> Unit = {},
     val onNote: (String) -> Unit,
     val onUrl: (String) -> Unit,
@@ -91,7 +95,16 @@ fun MarkdownView(text: String, actions: MarkdownActions, known: (String) -> Bool
                 is Block.Rule -> HorizontalDivider(Modifier.padding(vertical = 8.dp))
                 is Block.Embed -> {
                     val drawing = actions.sketch(block.target)
-                    if (drawing == null) Text("Missing drawing: ${block.target}", color = c.error, style = type.bodyMedium)
+                    val bytes = if (drawing == null) actions.painting(block.target) else null
+                    val image = remember(bytes) { bytes?.let { runCatching { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }.getOrNull() } }
+                    if (image != null) Image(
+                        bitmap = image,
+                        contentDescription = block.target,
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp)
+                            .aspectRatio(image.width.toFloat() / image.height, matchHeightConstraintsFirst = false)
+                            .clip(RoundedCornerShape(12.dp)),
+                    )
+                    else if (drawing == null) Text("Missing drawing: ${block.target}", color = c.error, style = type.bodyMedium)
                     else SketchPicture(
                         drawing,
                         Modifier.fillMaxWidth().heightIn(max = 320.dp).aspectRatio(aspectOf(drawing), matchHeightConstraintsFirst = false)

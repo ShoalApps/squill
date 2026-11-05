@@ -279,6 +279,7 @@ private fun NoteEditor(model: Model, library: Library, path: String, onOpen: (St
             onTag = onTag,
             onTask = { line -> text = text.copy(text = Markdown.toggleTask(text.text, line)) },
             sketch = { n -> library.sketch(n)?.sketch },
+            painting = { n -> if (n.endsWith(".ora", ignoreCase = true)) runCatching { model.vault.readBytes(n) }.getOrNull() else null },
         )
     }
     Column(

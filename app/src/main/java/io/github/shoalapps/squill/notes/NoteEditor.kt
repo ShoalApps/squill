@@ -220,6 +220,7 @@ fun NoteEditor(
     val actions = remember(path, known) {
         MarkdownActions(
             sketch = { name -> vm.library.value.sketch(name)?.sketch },
+            painting = { name -> vm.library.value.paintings.firstOrNull { it.path == name }?.thumbnail },
             onSketch = { name -> vm.library.value.sketch(name)?.let { flush(); onOpenSketch(it.path) } },
             onNote = { flush(); onOpenLink(it, note.folder) },
             onUrl = onUrl,

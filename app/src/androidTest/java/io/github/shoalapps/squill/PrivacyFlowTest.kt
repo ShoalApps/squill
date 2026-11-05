@@ -17,6 +17,7 @@ import io.github.shoalapps.squill.notes.LockedNotes
 import io.github.shoalapps.squill.notes.NoteCipher
 import io.github.shoalapps.squill.notes.NotesViewModel
 import io.github.shoalapps.squill.notes.Vault
+import io.github.shoalapps.squill.paint.frozen
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertEquals
@@ -104,6 +105,31 @@ class PrivacyFlowTest {
         waitFor { done }
         assertFalse(NoteCipher.isSealed(File(root, "Plain.md").readBytes()))
         assertEquals("secret words", File(root, "Plain.md").readText())
+    }
+
+    @Test fun aKeepExportBringsInNotesAndPhotos() {
+        val bmp = android.graphics.Bitmap.createBitmap(40, 30, android.graphics.Bitmap.Config.ARGB_8888)
+        bmp.eraseColor(0xFF00FF00.toInt())
+        val jpeg = java.io.ByteArrayOutputStream().also { bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, it) }.toByteArray()
+        val zip = java.io.ByteArrayOutputStream().also { out ->
+            io.github.shoalapps.squill.notes.writeZip(out, linkedMapOf(
+                "Takeout/Keep/Shopping.json" to """{"title":"Shopping","listContent":[{"text":"Eggs","isChecked":true},{"text":"Tea","isChecked":false}],"labels":[{"name":"Home list"}],"attachments":[{"filePath":"photo.jpg","mimetype":"image/jpeg"}],"isPinned":true,"userEditedTimestampUsec":1700000000000000}""".toByteArray(),
+                "Takeout/Keep/photo.jpg" to jpeg,
+            ))
+        }.toByteArray()
+        val result = io.github.shoalapps.squill.notes.KeepImport.import(vault, zip.inputStream()) { bytes ->
+            java.io.ByteArrayOutputStream().also { out ->
+                io.github.shoalapps.squill.paint.OraFile.save(io.github.shoalapps.squill.paint.OraFile.fromPicture(bytes).frozen(), out)
+            }.toByteArray()
+        }
+        assertEquals(1, result.imported)
+        assertEquals(0, result.skippedAttachments)
+        val note = vault.read("Shopping.md")
+        assertTrue(note.pinned)
+        assertTrue(note.body, note.body.contains("- [x] Eggs") && note.body.contains("- [ ] Tea") && note.body.contains("#Home_list"))
+        assertTrue(note.body, note.body.contains(".ora]]"))
+        val embed = Regex("!\\[\\[(.+?)]]").find(note.body)!!.groupValues[1]
+        assertEquals(40, io.github.shoalapps.squill.paint.OraFile.load(vault.readBytes(embed)).width)
     }
 
     @Test fun aPictureOpensAsAPainting() {

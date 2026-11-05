@@ -96,6 +96,7 @@ class ReadActions(
     val onTag: (String) -> Unit,
     val onTask: (Int) -> Unit,
     val sketch: (String) -> Sketch?,
+    val painting: (String) -> ByteArray? = { null },
 )
 
 /** A note in reading view. */
@@ -136,7 +137,10 @@ fun MarkdownPane(text: String, actions: ReadActions, known: (String) -> Boolean,
                     is Block.Rule -> HorizontalDivider(Modifier.padding(vertical = 8.dp))
                     is Block.Embed -> {
                         val s = actions.sketch(b.target)
-                        if (s == null) Text("Missing drawing: ${b.target}", color = c.error, style = type.bodyMedium)
+                        val bytes = if (s == null) actions.painting(b.target) else null
+                        val picture = remember(bytes) { bytes?.let(::paintingPicture) }
+                        if (picture != null) androidx.compose.foundation.Image(picture, b.target, Modifier.fillMaxWidth().heightIn(max = 360.dp))
+                        else if (s == null) Text("Missing drawing: ${b.target}", color = c.error, style = type.bodyMedium)
                         else SketchPane(s, Modifier.fillMaxWidth().heightIn(max = 360.dp).aspectRatio(((s.bounds()[2] - s.bounds()[0]) / (s.bounds()[3] - s.bounds()[1])).coerceIn(.5f, 3f), matchHeightConstraintsFirst = false).clip(RoundedCornerShape(12.dp)))
                     }
                 }
