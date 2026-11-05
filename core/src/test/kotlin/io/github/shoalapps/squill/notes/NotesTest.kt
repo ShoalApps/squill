@@ -767,6 +767,37 @@ class LockedWriteTest {
 class EncryptionSafetyTest {
     @get:Rule val dir = TemporaryFolder()
 
+    @Test fun aCrashDuringEncryptingIsFinishedOnUnlock() {
+        val v = Vault(dir.newFolder("crash"))
+        v.create("", "Done", "already sealed")
+        v.create("", "Left", "still plain")
+        v.create("", "Binned", "in the trash"); v.trash("Binned.md")
+        val key = PasswordKey.create(File(v.root, LockedNotes.ALL_NOTES_KEY), "correct horse")
+        File(v.root, "Done.md").let { it.writeBytes(key.encode(it.readBytes())) }
+        val stray = File(v.root, ".Left.md.converting.tmp").apply { writeText("half written") }
+        v.cipher = key
+        v.finishSealing()
+        assertFalse(stray.exists())
+        v.root.walkTopDown().filter { it.isFile && it.extension == "md" }.forEach { assertTrue(it.path, NoteCipher.isSealed(it.readBytes())) }
+        assertEquals("still plain", v.read("Left.md").body)
+        assertEquals("already sealed", v.read("Done.md").body)
+    }
+
+    @Test fun twoBackupsOfTheSameNoteBothSurvive() {
+        fun backupWith(name: String, body: String): ByteArray {
+            val v = Vault(dir.newFolder(name))
+            LockedNotes(v.root).also { it.setUp("old password"); it.save("Note", body, "same") }
+            return backup(v)
+        }
+        val to = Vault(dir.newFolder("to"))
+        val here = LockedNotes(to.root).also { it.setUp("new password") }
+        to.importZip(backupWith("first", "first version").inputStream())
+        to.importZip(backupWith("second", "second version").inputStream())
+        assertEquals(2, here.restoredSets())
+        assertEquals(2, here.mergeRestored("old password"))
+        assertEquals(setOf("first version", "second version"), here.notes().map { it.body }.toSet())
+    }
+
     private fun backup(v: Vault) = java.io.ByteArrayOutputStream().also { v.export(it) }.toByteArray()
 
     @Test fun aFailedConversionChangesNothing() {
@@ -852,4 +883,3 @@ class DeckEditTest {
         assertEquals(edited, Deck.parse(edited.toJson()))
     }
 }
-

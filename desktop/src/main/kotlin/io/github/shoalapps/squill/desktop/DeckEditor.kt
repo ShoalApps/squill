@@ -20,6 +20,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -66,6 +67,8 @@ fun DeckEditor(deck: Deck, onSave: (Deck) -> Unit, modifier: Modifier = Modifier
         saved = working
         save(working)
     }
+    // Leaving straight after typing mustn't lose it.
+    DisposableEffect(Unit) { onDispose { if (working != saved) save(working) } }
     fun change(next: Deck) { if (next != working) { undo = (undo + working).takeLast(100); working = next } }
     val c = MaterialTheme.colorScheme
     val slide = working.slides[index]

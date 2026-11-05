@@ -105,6 +105,7 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
             if (key != null) {
                 vault.cipher = key
                 _needsUnlock.value = false
+                viewModelScope.launch(queue) { runCatching { synchronized(vaultLock) { vault.finishSealing() } } }
                 open()
             }
             withContext(Dispatchers.Main) { onDone(key != null) }

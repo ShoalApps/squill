@@ -146,7 +146,6 @@ class LockedNotes(private val root: File) {
     /** Brings in every waiting set that opens with [password], under this vault's key. Returns how many notes came in. */
     fun mergeRestored(password: String): Int {
         key() // Nothing can come in until this vault is open.
-        val mine = dir.listFiles { f -> f.name.endsWith(".enc") }.orEmpty().map { it.name }.toSet()
         var count = 0
         var opened = false
         sets().forEach { set ->
@@ -155,7 +154,7 @@ class LockedNotes(private val root: File) {
             set.listFiles { f -> f.name.endsWith(".enc") }.orEmpty().forEach { f ->
                 val note = json.decodeFromString(LockedNote.serializer(), theirs.decode(f.readBytes()).toString(Charsets.UTF_8))
                 // A note here under the same id stays, and the restored one arrives as a new note.
-                if (f.name in mine) save(note.title, note.body, modified = note.modified) else save(note.title, note.body, note.id, note.modified)
+                if (File(dir, f.name).exists()) save(note.title, note.body, modified = note.modified) else save(note.title, note.body, note.id, note.modified)
                 count++
             }
             set.deleteRecursively()

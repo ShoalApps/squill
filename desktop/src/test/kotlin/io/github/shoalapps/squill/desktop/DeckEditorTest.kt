@@ -44,6 +44,18 @@ class DeckEditorTest {
         assertEquals(listOf(2L), saved!!.slides.map { it.id })
     }
 
+    @Test fun leavingStraightAfterTypingStillSaves() = runDesktopComposeUiTest(1200, 1000) {
+        var saved: Deck? = null
+        var open by androidx.compose.runtime.mutableStateOf(true)
+        setContent { MaterialTheme { if (open) DeckEditor(start, { saved = it }) } }
+        mainClock.autoAdvance = false
+        onNodeWithContentDescription("Text 1").performTextReplacement("Quick")
+        open = false
+        mainClock.advanceTimeByFrame()
+        waitForIdle()
+        assertEquals("Quick", saved!!.slides[0].elements[0].text)
+    }
+
     @Test fun aChangeFromThePhoneShowsWhenNothingIsUnsaved() = runDesktopComposeUiTest(1200, 1000) {
         var deck by androidx.compose.runtime.mutableStateOf(start)
         setContent { MaterialTheme { DeckEditor(deck, {}) } }

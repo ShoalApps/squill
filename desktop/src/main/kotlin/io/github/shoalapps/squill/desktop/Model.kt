@@ -89,6 +89,7 @@ class Model(val root: File, private val hosting: Boolean = true, private val dev
 
     fun unlock(password: String, onDone: (Boolean) -> Unit) = background({ onDone(it.isSuccess) }) {
         vault.cipher = PasswordKey.unlock(keyFile, password)
+        runCatching { vault.finishSealing() }
         _needsUnlock.value = false
         open()
     }

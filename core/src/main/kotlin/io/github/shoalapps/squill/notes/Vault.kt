@@ -358,8 +358,26 @@ class Vault(val root: File) {
     }
 
     /** Seals or unseals every file, one at a time, so an interruption leaves everything readable. */
+    private fun convertible(): List<File> = (stats().map { at(it.path) } + (if (trash.exists()) trash.walkTopDown().filter { it.isFile && it.extension.lowercase() in KINDS }.toList() else emptyList()))
+
+    /**
+     * Finishes a conversion a crash cut short: once unlocked, anything still plain gets sealed, and
+     * half-written copies go. Reading a mix of sealed and plain was already safe, but it shouldn't stay.
+     */
+    fun finishSealing() {
+        val key = cipher ?: return
+        root.walkTopDown().filter { it.isFile && it.name.endsWith(".converting.tmp") }.forEach { it.delete() }
+        convertible().forEach { file ->
+            val bytes = file.readBytes()
+            if (NoteCipher.isSealed(bytes)) return@forEach
+            val tmp = File(file.parentFile, ".${file.name}.converting.tmp")
+            tmp.writeBytes(key.encode(bytes))
+            if (!tmp.renameTo(file)) { file.delete(); if (!tmp.renameTo(file)) throw VaultException("Couldn't encrypt ${file.name}") }
+        }
+    }
+
     fun convert(to: NoteCipher?) {
-        val files = (stats().map { at(it.path) } + (if (trash.exists()) trash.walkTopDown().filter { it.isFile && it.extension.lowercase() in KINDS }.toList() else emptyList()))
+        val files = convertible()
         // Everything is written beside the originals first, so running out of space or hitting an
         // unreadable file changes nothing at all.
         val ready = ArrayList<Pair<File, File>>(files.size)
