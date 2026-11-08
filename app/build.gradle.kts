@@ -60,7 +60,8 @@ dependencies {
     implementation("io.github.shoalapps.common:shoal-ui:" + rootProject.file("shoal-common.version").readText().trim())
     implementation(project(":core"))
     implementation(platform("androidx.compose:compose-bom:2026.09.00"))
-    implementation("androidx.compose.material3:material3")
+    // Material 3 Expressive: its motion, shapes and loading indicators, like the other Shoal apps.
+    implementation("androidx.compose.material3:material3:1.5.0-rc01")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material:material-icons-core:1.7.8")

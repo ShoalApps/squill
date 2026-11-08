@@ -2,7 +2,9 @@ package io.github.shoalapps.squill
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.MaterialExpressiveTheme
+import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
@@ -25,6 +27,8 @@ private val Dark = darkColorScheme(
     background = Color(0xFF131318), surface = Color(0xFF131318), onSurface = Color(0xFFE4E1E9),
 )
 
+/** Your wallpaper's colours with Material 3 Expressive motion: springy, a little playful. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun SquillTheme(content: @Composable () -> Unit) {
     val dark = isSystemInDarkTheme()
@@ -35,5 +39,5 @@ fun SquillTheme(content: @Composable () -> Unit) {
         dark -> Dark
         else -> Light
     }
-    MaterialTheme(colorScheme = scheme, content = content)
+    MaterialExpressiveTheme(colorScheme = scheme, motionScheme = MotionScheme.expressive(), content = content)
 }

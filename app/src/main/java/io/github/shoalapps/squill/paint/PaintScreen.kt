@@ -1,4 +1,4 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 
 package io.github.shoalapps.squill.paint
 
@@ -156,7 +156,7 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
     if (p == null || !libraryReady) {
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface), contentAlignment = Alignment.Center) {
             val message = failed
-            if (message == null) CircularProgressIndicator()
+            if (message == null) androidx.compose.material3.LoadingIndicator(Modifier.size(64.dp))
             else Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(message)
                 TextButton(onClick = onClose) { Text("Back") }
@@ -779,7 +779,7 @@ fun PaintScreen(path: String, vm: NotesViewModel, onClose: () -> Unit, onPathCha
                 Box(Modifier.fillMaxSize().background(Color(0x66000000)).pointerInput(Unit) { detectTapGestures { } }, contentAlignment = Alignment.Center) {
                     Surface(shape = MaterialTheme.shapes.medium) {
                         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(Modifier.size(24.dp)); Spacer(Modifier.width(12.dp)); Text(label)
+                            androidx.compose.material3.LoadingIndicator(Modifier.size(32.dp)); Spacer(Modifier.width(12.dp)); Text(label)
                         }
                     }
                 }
