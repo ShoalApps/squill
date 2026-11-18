@@ -13,7 +13,7 @@ kotlin {
 }
 
 dependencies {
-    api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.12.0")
+    api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.13.0")
     // Android has its own XML parser built in; the desktop app and tests bring this one.
     compileOnly("net.sf.kxml:kxml2:2.3.0")
     testImplementation("net.sf.kxml:kxml2:2.3.0")

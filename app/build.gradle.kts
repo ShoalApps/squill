@@ -69,7 +69,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.19.1")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.12.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.13.0")
     implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("androidx.ink:ink-authoring-compose:1.0.0")
     implementation("androidx.ink:ink-brush:1.0.0")
